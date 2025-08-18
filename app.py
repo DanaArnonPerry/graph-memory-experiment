@@ -117,40 +117,71 @@ def go_next(step=None):
         st.session_state["step"] = step
 
 
+
+
 def _show_image(src, caption=None):
     """
-    Robust image display:
-    - Supports http(s) and local paths.
-    - Converts common Google Drive URLs to direct view links.
-    - Falls back to raw <img> HTML if st.image fails (prevents crashes).
+    Ultra-robust image renderer (updated):
+    - Accepts strings, NaNs, local relative paths in repo root or images/ subdir.
+    - Converts Drive/Dropbox/OneDrive/SharePoint to direct links.
+    - Falls back to <img> if st.image fails.
     """
-    import re
-    def _gdrive_direct(u: str) -> str:
-        if not isinstance(u, str):
+    import re, os, math
+    import pandas as _pd
+
+    def _is_blank(x):
+        if x is None: return True
+        if isinstance(x, float) and (_pd.isna(x) or math.isnan(x)): return True
+        s = str(x).strip()
+        return s == "" or s.lower() in ("nan", "none", "null")
+
+    def _normalize(u: str) -> str:
+        # Already a local/absolute path that exists?
+        if os.path.exists(u):
             return u
-        if "drive.google.com" not in u:
+        # Relative file in repo root?
+        root_cand = os.path.join(".", u)
+        if os.path.exists(root_cand):
+            return root_cand
+        # If it's not an explicit URL, try images/ subfolder
+        if not re.match(r"^https?://|^data:image/|^/|^[A-Za-z]:\\", u):
+            cand = os.path.join("images", u)
+            if os.path.exists(cand):
+                return cand
+        # Google Drive
+        if "drive.google.com" in u:
+            m = re.search(r"/file/d/([^/]+)/", u) or re.search(r"[?&]id=([^&]+)", u)
+            if m: return f"https://drive.google.com/uc?export=view&id={m.group(1)}"
+        # Dropbox
+        if "dropbox.com" in u:
+            u = u.replace("www.dropbox.com", "dl.dropboxusercontent.com")
+            u = re.sub(r"[?&]dl=0", "", u)
+            if "raw=1" not in u:
+                sep = "&" if "?" in u else "?"
+                u = f"{u}{sep}raw=1"
             return u
-        # /file/d/<ID>/view
-        m = re.search(r"/file/d/([^/]+)/", u)
-        if m:
-            return f"https://drive.google.com/uc?export=view&id={m.group(1)}"
-        # open?id=<ID>
-        m = re.search(r"[?&]id=([^&]+)", u)
-        if m:
-            return f"https://drive.google.com/uc?export=view&id={m.group(1)}"
+        # OneDrive/SharePoint
+        if "1drv.ms" in u or "onedrive.live.com" in u:
+            if "download=1" not in u:
+                sep = "&" if "?" in u else "?"
+                u = f"{u}{sep}download=1"
+            return u
+        if "sharepoint.com" in u:
+            u = u.replace("web=1", "download=1")
+            return u
         return u
 
+    if _is_blank(src):
+        st.warning("לא הוגדרה תמונה לשורה זו בקובץ (עמודת V ריקה).")
+        return
+
+    s = str(src).strip()
+    s = _normalize(s)
+
     try:
-        import re
-        src2 = _gdrive_direct(src) if isinstance(src, str) else src
-        st.image(src2, caption=caption, use_container_width=True)
+        st.image(s, caption=caption, use_container_width=True)
     except Exception:
-        # Fallback: render plain HTML <img> to avoid PIL/format detection errors
-        if isinstance(src, str):
-            safe_src = _gdrive_direct(src)
-            st.markdown(f"<img src='{safe_src}' style='max-width:100%;width:100%;height:auto;display:block;'/>", unsafe_allow_html=True)
-        else:
-            st.warning("לא ניתן להציג את התמונה (פורמט לא נתמך).")
+        st.markdown(f"<img src='{s}' style='max-width:100%;width:100%;height:auto;display:block;'/>", unsafe_allow_html=True)
 def record_answer(graph_order_index, graph_row_index, graph_id, qn, q_text, options, chosen, correct_letter, start_ms):
     response_time_ms = now_ms() - start_ms
     chosen_text = options.get(chosen, "") if chosen else ""
