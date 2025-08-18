@@ -124,6 +124,7 @@ def _show_image(src, caption=None):
     - Converts common Google Drive URLs to direct view links.
     - Falls back to raw <img> HTML if st.image fails (prevents crashes).
     """
+    import re
     def _gdrive_direct(u: str) -> str:
         if not isinstance(u, str):
             return u
@@ -140,7 +141,7 @@ def _show_image(src, caption=None):
         return u
 
     try:
-        import re as _re
+        import re
         src2 = _gdrive_direct(src) if isinstance(src, str) else src
         st.image(src2, caption=caption, use_container_width=True)
     except Exception:
@@ -150,7 +151,7 @@ def _show_image(src, caption=None):
             st.markdown(f"<img src='{safe_src}' style='max-width:100%;width:100%;height:auto;display:block;'/>", unsafe_allow_html=True)
         else:
             st.warning("לא ניתן להציג את התמונה (פורמט לא נתמך).")
-def record_answer((graph_order_index, graph_row_index, graph_id, qn, q_text, options, chosen, correct_letter, start_ms):
+def record_answer(graph_order_index, graph_row_index, graph_id, qn, q_text, options, chosen, correct_letter, start_ms):
     response_time_ms = now_ms() - start_ms
     chosen_text = options.get(chosen, "") if chosen else ""
     correct_text = options.get(correct_letter, "") if correct_letter else ""
