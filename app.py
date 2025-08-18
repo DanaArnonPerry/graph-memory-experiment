@@ -104,9 +104,7 @@ def reset_run():
     st.session_state["question_queue"] = []
 
 def time_left(limit_s: int):
-    """
-    טיימר תואם כל גרסאות Streamlit: sleep(1) + rerun עד לסיום.
-    """
+    """טיימר תואם כל גרסאות Streamlit: sleep(1) + rerun עד לסיום."""
     elapsed_s = (now_ms() - st.session_state["step_started_ms"]) / 1000.0
     remaining = max(0, int(limit_s - elapsed_s))
     if remaining > 0:
@@ -126,12 +124,12 @@ def go_next(step=None):
 def _show_image(src, caption=None):
     """
     Ultra-robust image renderer:
-    - מקבל נתיבים יחסיים/מקומיים וקישורי ענן.
-    - בודק קיום בשורש הריפו או בתיקיית images/.
-    - ממיר Drive/Dropbox/OneDrive/SharePoint ללינקים ישירים.
-    - נופל ל-<img> HTML אם st.image נכשל.
+    - נתיבים יחסיים/מקומיים וקישורי ענן.
+    - חיפוש בשורש הריפו ובתיקיית images/.
+    - המרת Drive/Dropbox/OneDrive/SharePoint ללינקים ישירים.
+    - נפילה ל-<img> HTML אם st.image נכשל.
     """
-    import re, os, math
+    import re, os, math, html as _html
     import pandas as _pd
 
     def _is_blank(x):
@@ -160,8 +158,7 @@ def _show_image(src, caption=None):
         # Dropbox
         if "dropbox.com" in u:
             u = u.replace("www.dropbox.com", "dl.dropboxusercontent.com")
-            import re as _re
-            u = _re.sub(r"[?&]dl=0\b", "", u)
+            u = re.sub(r"[?&]dl=0\b", "", u)
             if "raw=1" not in u:
                 sep = "&" if "?" in u else "?"
                 u = f"{u}{sep}raw=1"
@@ -174,8 +171,7 @@ def _show_image(src, caption=None):
             return u
         # SharePoint
         if "sharepoint.com" in u:
-            u = u.replace("web=1", "download=1")
-            return u
+            return u.replace("web=1", "download=1")
         return u
 
     if _is_blank(src):
@@ -188,8 +184,11 @@ def _show_image(src, caption=None):
     try:
         st.image(s, caption=caption, use_container_width=True)
     except Exception:
-        st.markdown(f"<img src='{s}' style='max-width:100%;width:100%;height:auto;display:block;'/>",
-                    unsafe_allow_html=True)
+        # fallback HTML (וגם מגן מפני HTML לא בטוח בטקסטים)
+        st.markdown(
+            f"<img src='{_html.escape(s)}' style='max-width:100%;width:100%;height:auto;display:block;'/>",
+            unsafe_allow_html=True
+        )
 
 def record_answer(graph_order_index, graph_row_index, graph_id, qn, q_text, options, chosen, correct_letter, start_ms):
     response_time_ms = now_ms() - start_ms
@@ -205,10 +204,10 @@ def record_answer(graph_order_index, graph_row_index, graph_id, qn, q_text, opti
         "graph_row_index": graph_row_index,
         "graph_id": graph_id,
         "question_number": qn,
-        "question_text": qn and q_text or "",
-        "option_chosen_letter": chosen if chosen else "",
+        "question_text": q_text or "",
+        "option_chosen_letter": chosen or "",
         "option_chosen_text": chosen_text,
-        "correct_letter": correct_letter if correct_letter else "",
+        "correct_letter": correct_letter or "",
         "correct_text": correct_text,
         "is_correct": bool(is_correct),
         "response_time_ms": int(response_time_ms),
@@ -236,26 +235,30 @@ def page_intro():
         st.session_state["phase"] = "running"
         go_next(("context", 0))
 
-def show_context(idx: int, post=False):
+def show_context(idx: int, post: bool = False):
+    import html as _html
     row = items.iloc[idx]
+
     # מונה גרפים (למשל 1/12)
-    st.markdown(f"<div style='text-align:right;font-size:1.25rem;color:#555;'>{idx+1}/{NUM_GRAPHS}</div>", unsafe_allow_html=True)
-    # טקסט ההקשר – גדול ובולט
-   ctx = row.get("TheContext", "")
+    st.markdown(
+        f"<div style='text-align:right;font-size:1.25rem;color:#555;'>{idx+1}/{NUM_GRAPHS}</div>",
+        unsafe_allow_html=True
+    )
 
-# מומלץ לאבטח את הטקסט ולהמיר שורות חדשות ל-<br>
-import html as _html
-safe_ctx = _html.escape(str(ctx)).replace("\n", "<br>")
-
-st.markdown(
-    f"<div style='text-align:right;font-weight:800;font-size:2rem;line-height:1.6'>{safe_ctx}</div>",
-    unsafe_allow_html=True
-)
-
+    # טקסט ההקשר – גדול ובולט (עם escape כדי למנוע HTML לא רצוי)
+    ctx = row.get("TheContext", "")
+    safe_ctx = _html.escape(str(ctx)).replace("\n", "<br>")
+    st.markdown(
+        f"<div style='text-align:right;font-weight:800;font-size:2rem;line-height:1.6'>{safe_ctx}</div>",
+        unsafe_allow_html=True
+    )
 
     # טיימר + התקדמות
     remaining = time_left(DUR_CONTEXT)
-    st.markdown(f"<div style='text-align:right;color:#666;'>⏳ עובר למסך הבא בעוד <b>{int(remaining)}</b> שניות.</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='text-align:right;color:#666;'>⏳ עובר למסך הבא בעוד <b>{int(remaining)}</b> שניות.</div>",
+        unsafe_allow_html=True
+    )
 
     if st.button("המשך ▶️"):
         if group == 3 and not post:
@@ -282,7 +285,10 @@ st.markdown(
 def show_graph(idx: int):
     row = items.iloc[idx]
     # מונה בלבד (בלי כותרת "הצגת גרף")
-    st.markdown(f"<div style='text-align:right;font-size:1.25rem;color:#555;'>{idx+1}/{NUM_GRAPHS}</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='text-align:right;font-size:1.25rem;color:#555;'>{idx+1}/{NUM_GRAPHS}</div>",
+        unsafe_allow_html=True
+    )
     _show_image(row[v_col])
     remaining = time_left(DUR_GRAPH)
     st.markdown(f"⏳ הזמן שנותר: **{int(remaining)}** שניות")
@@ -325,15 +331,22 @@ def show_question_for_graph(idx: int, qn: int):
         st.session_state["question_start_ms"] = now_ms()
 
     remaining = time_left(DUR_ANSWER_MAX)
-    choice = st.radio("בחרי תשובה:", ["A", "B", "C", "D"], index=None,
-                      format_func=lambda x: f"{x}: {q['options'][x]}", key=key_choice)
+    st.radio(
+        "בחרי תשובה:",
+        ["A", "B", "C", "D"],
+        index=None,
+        format_func=lambda x: f"{x}: {q['options'][x]}",
+        key=key_choice,
+    )
 
     c1, c2 = st.columns([1, 1])
     with c1:
         if st.button("שליחה והמשך ✅", key=key_button):
             chosen = st.session_state[key_choice]
-            record_answer(idx + 1, int(row.name), str(row.get("GraphID", "")), qn,
-                          q["text"], q["options"], chosen, q["correct_letter"], st.session_state["question_start_ms"])
+            record_answer(
+                idx + 1, int(row.name), str(row.get("GraphID", "")), qn,
+                q["text"], q["options"], chosen, q["correct_letter"], st.session_state["question_start_ms"]
+            )
             st.session_state.pop("question_start_ms", None)
             if group in (1, 2):
                 if qn == 1 and group == 1:
@@ -360,9 +373,11 @@ def show_question_for_graph(idx: int, qn: int):
     # Timeout
     if remaining <= 0:
         chosen = st.session_state.get(key_choice, None)
-        record_answer(idx + 1, int(row.name), str(row.get("GraphID", "")), qn,
-                      q["text"], q["options"], chosen, q["correct_letter"],
-                      st.session_state.get("question_start_ms", now_ms()))
+        record_answer(
+            idx + 1, int(row.name), str(row.get("GraphID", "")), qn,
+            q["text"], q["options"], chosen, q["correct_letter"],
+            st.session_state.get("question_start_ms", now_ms())
+        )
         st.session_state.pop("question_start_ms", None)
         if group in (1, 2):
             if qn == 1 and group == 1:
@@ -421,14 +436,19 @@ def page_admin():
         df = download_full_results()
         if df is not None:
             st.dataframe(df)
-            st.download_button("הורדת CSV", data=df.to_csv(index=False).encode("utf-8"),
-                               file_name="results_from_sheet.csv", mime="text/csv")
+            st.download_button(
+                "הורדת CSV",
+                data=df.to_csv(index=False).encode("utf-8"),
+                file_name="results_from_sheet.csv",
+                mime="text/csv",
+            )
         else:
             st.info("אין Google Sheets מוגדר. מחפשת קובץ מקומי.")
             local = "results/results_local.csv"
             if os.path.exists(local):
-                st.download_button("הורדת CSV מקומי", data=open(local, "rb").read(),
-                                   file_name="results_local.csv")
+                st.download_button(
+                    "הורדת CSV מקומי", data=open(local, "rb").read(), file_name="results_local.csv"
+                )
             else:
                 st.write("אין קובץ תוצאות מקומי.")
     else:
