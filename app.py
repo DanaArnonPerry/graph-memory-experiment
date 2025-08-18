@@ -116,10 +116,41 @@ def go_next(step=None):
     if step is not None:
         st.session_state["step"] = step
 
-def _show_image(src, caption=None):
-    st.image(src, caption=caption, use_container_width=True)
 
-def record_answer(graph_order_index, graph_row_index, graph_id, qn, q_text, options, chosen, correct_letter, start_ms):
+def _show_image(src, caption=None):
+    """
+    Robust image display:
+    - Supports http(s) and local paths.
+    - Converts common Google Drive URLs to direct view links.
+    - Falls back to raw <img> HTML if st.image fails (prevents crashes).
+    """
+    def _gdrive_direct(u: str) -> str:
+        if not isinstance(u, str):
+            return u
+        if "drive.google.com" not in u:
+            return u
+        # /file/d/<ID>/view
+        m = re.search(r"/file/d/([^/]+)/", u)
+        if m:
+            return f"https://drive.google.com/uc?export=view&id={m.group(1)}"
+        # open?id=<ID>
+        m = re.search(r"[?&]id=([^&]+)", u)
+        if m:
+            return f"https://drive.google.com/uc?export=view&id={m.group(1)}"
+        return u
+
+    try:
+        import re as _re
+        src2 = _gdrive_direct(src) if isinstance(src, str) else src
+        st.image(src2, caption=caption, use_container_width=True)
+    except Exception:
+        # Fallback: render plain HTML <img> to avoid PIL/format detection errors
+        if isinstance(src, str):
+            safe_src = _gdrive_direct(src)
+            st.markdown(f"<img src='{safe_src}' style='max-width:100%;width:100%;height:auto;display:block;'/>", unsafe_allow_html=True)
+        else:
+            st.warning("לא ניתן להציג את התמונה (פורמט לא נתמך).")
+def record_answer((graph_order_index, graph_row_index, graph_id, qn, q_text, options, chosen, correct_letter, start_ms):
     response_time_ms = now_ms() - start_ms
     chosen_text = options.get(chosen, "") if chosen else ""
     correct_text = options.get(correct_letter, "") if correct_letter else ""
