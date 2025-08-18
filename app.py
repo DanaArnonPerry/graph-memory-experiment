@@ -241,8 +241,17 @@ def show_context(idx: int, post=False):
     # מונה גרפים (למשל 1/12)
     st.markdown(f"<div style='text-align:right;font-size:1.25rem;color:#555;'>{idx+1}/{NUM_GRAPHS}</div>", unsafe_allow_html=True)
     # טקסט ההקשר – גדול ובולט
-    ctx = row.get("TheContext", "")
-    st.markdown(f\"\"\"<div style='text-align:right;font-weight:800;font-size:2rem;line-height:1.6'>{ctx}</div>\"\"\", unsafe_allow_html=True)
+   ctx = row.get("TheContext", "")
+
+# מומלץ לאבטח את הטקסט ולהמיר שורות חדשות ל-<br>
+import html as _html
+safe_ctx = _html.escape(str(ctx)).replace("\n", "<br>")
+
+st.markdown(
+    f"<div style='text-align:right;font-weight:800;font-size:2rem;line-height:1.6'>{safe_ctx}</div>",
+    unsafe_allow_html=True
+)
+
 
     # טיימר + התקדמות
     remaining = time_left(DUR_CONTEXT)
