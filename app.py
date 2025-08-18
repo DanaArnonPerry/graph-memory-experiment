@@ -20,7 +20,7 @@ if st.sidebar.button("הקצה מזהה חדש"):
 participant_id = ensure_id()
 v_override = st.sidebar.selectbox("בחרי עמודת ויזואליזציות (V1..V4)", options=["AUTO","V1","V2","V3","V4"], index=0)
 v_col = default_v_for_pid(participant_id) if v_override == "AUTO" else v_override
-st.sidebar.markdown(f"**לאבזק V לעדכון:** `{v_col}`")
+st.sidebar.markdown(f"**עמודת V לנבדק:** `{v_col}`")
 
 # ---------- Style controls (RTL & design) ----------
 with st.sidebar.expander("🎨 עיצוב ותצוגה (RTL)", expanded=True):
@@ -97,12 +97,18 @@ def reset_run():
     st.session_state["question_queue"] = []
 
 def time_left(limit_s: int):
+    """
+    Safer timer: refreshes once per second via sleep+rerun (works on most Streamlit builds).
+    """
     elapsed_s = (now_ms() - st.session_state["step_started_ms"]) / 1000.0
-    remaining = max(0, limit_s - elapsed_s)
-    if remaining == 0:
-        st.experimental_rerun()
-    else:
-        st.autorefresh(interval=1000, key=f"tick-{st.session_state['step']}")
+    remaining = max(0, int(limit_s - elapsed_s))
+    if remaining > 0:
+        import time as _t
+        _t.sleep(1)
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
     return remaining
 
 def go_next(step=None):
