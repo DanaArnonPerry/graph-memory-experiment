@@ -164,13 +164,18 @@ def page_intro():
         st.session_state["phase"] = "running"
         go_next(("context", 0))
 
+
 def show_context(idx: int, post=False):
     row = items.iloc[idx]
-    st.subheader(f"שקף הקשר {'(אחרי הגרף)' if post else ''} — גרף {idx+1}/{NUM_GRAPHS}")
+    # Counter line (e.g., 1/12) on the right
+    st.markdown(f"<div style='text-align:right;font-size:1.25rem;color:#555;'>{idx+1}/{NUM_GRAPHS}</div>", unsafe_allow_html=True)
+    # Big, bold context text
     ctx = row.get("TheContext","")
-    st.info(ctx if isinstance(ctx, str) else "")
+    ctx_html = f"<div style='text-align:right;font-weight:800;font-size:2rem;line-height:1.6'>{ctx}</div>"
+    st.markdown(ctx_html, unsafe_allow_html=True)
+    # Timer line
     remaining = time_left(DUR_CONTEXT)
-    st.markdown(f"⏳ עובר למסך הבא בעוד **{int(remaining)}** שניות.")
+    st.markdown(f"<div style='text-align:right;color:#666;'>⏳ עובר למסך הבא בעוד <b>{int(remaining)}</b> שניות.</div>", unsafe_allow_html=True)
     if st.button("המשך ▶️"):
         if group == 3 and not post:
             go_next(("graph", idx))
@@ -193,8 +198,9 @@ def show_context(idx: int, post=False):
             go_next(("graph", idx))
 
 def show_graph(idx: int):
+(idx: int):
     row = items.iloc[idx]
-    st.subheader(f"הצגת גרף {idx+1}/{NUM_GRAPHS}")
+    st.markdown(f"<div style='text-align:right;font-size:1.25rem;color:#555;'>{idx+1}/{NUM_GRAPHS}</div>", unsafe_allow_html=True)
     _show_image(row[v_col])
     remaining = time_left(DUR_GRAPH)
     st.markdown(f"⏳ הזמן שנותר: **{int(remaining)}** שניות")
@@ -276,7 +282,7 @@ def show_question_for_graph(idx: int, qn: int):
             else: st.session_state["phase"] = "done"; go_next()
 
 def page_run():
-    st.caption(f"משתתף: `{participant_id}` | קבוצה {group} | עמודת {v_col} | {NUM_GRAPHS} גרפים")
+    # ללא כותרת עליונה למשתתף
     step_name, idx = st.session_state["step"]
     if step_name == "context":
         show_context(idx, post=False)
@@ -292,9 +298,6 @@ def page_run():
     elif step_name == "questions":
         gidx, qn = st.session_state["question_queue"][idx]
         show_question_for_graph(gidx, qn)
-    if st.button("איפוס ▶️ התחל מחדש"):
-        reset_run()
-        st.experimental_rerun()
 
 def page_done():
     st.success("תודה על ההשתתפות!")
