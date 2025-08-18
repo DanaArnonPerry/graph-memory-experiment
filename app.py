@@ -198,7 +198,6 @@ def show_context(idx: int, post=False):
             go_next(("graph", idx))
 
 def show_graph(idx: int):
-(idx: int):
     row = items.iloc[idx]
     st.markdown(f"<div style='text-align:right;font-size:1.25rem;color:#555;'>{idx+1}/{NUM_GRAPHS}</div>", unsafe_allow_html=True)
     _show_image(row[v_col])
