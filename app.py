@@ -634,7 +634,7 @@ def main():
     else:
         missing = 0
         for p in df[colmap["images"]].fillna("").astype(str).values.flatten().tolist():
-            if p and (not p.startswith("http")) and (not os.path.exists(p)):
+            if p and (not is_url(p)) and (not image_exists(p)):
                 missing += 1
                 if missing > 3:
                     break
