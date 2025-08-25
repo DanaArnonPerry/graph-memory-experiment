@@ -466,7 +466,7 @@ def phase_questions(show_graph: bool):
     group = st.session_state["group"]
     t = current_trial()
     if show_graph and t.image_path:
-        st.image(t.image_path, use_column_width=True)
+        st.image(t.image_path, use_container_width=True)
     elif show_graph and not t.image_path:
         placeholder_image()
 
