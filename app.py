@@ -107,54 +107,36 @@ def detect_color_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 def detect_columns(df: pd.DataFrame) -> Dict[str, Any]:
-    import re
-
-    # תמונות: קודם V1..V4, ואם לא — עמודות חלופיות כמו ImageFileName
-    image_cols = [c for c in df.columns if c.upper() in ["V1", "V2", "V3", "V4"]]
-    if not image_cols:
-        for cand in ["ImageFileName", "image", "Image", "img", "Img",
-                     "image_path", "ImagePath", "ImageURL", "imageURL"]:
-            if cand in df.columns:
-                image_cols.append(cand)
-                break
-    if len(image_cols) == 0:
-        warn_box("לא נמצאו עמודות תמונה. נסו V1–V4 או ImageFileName. יוצגו מצייני מקום.")
-
-    # טקסט הקשר/כותרת
-    context_col = None
-    for cand in ["TheContext", "context", "Context", "CONTEXT",
-                 "title", "Title", "כותרת", "message", "Message"]:
+    # תמונות: קודם ImageFileName, ואם לא קיים—V1..V4
+    image_cols = []
+    for cand in ["ImageFileName", "image", "Image", "img", "Img",
+                 "image_path", "ImagePath", "ImageURL", "imageURL"]:
         if cand in df.columns:
-            context_col = cand
+            image_cols = [cand]
             break
+    if not image_cols:
+        image_cols = [c for c in df.columns if c.upper() in ["V1", "V2", "V3", "V4"]]
+        if not image_cols:
+            warn_box("לא נמצאו עמודות תמונה (מומלץ: ImageFileName). יוצגו מצייני מקום.")
 
-    # סטים של שאלות: תומך גם ב־Question{n}Text ו־Q{n}OptionA..D ו־Q{n}CorrectAnswer
+    # הקשר
+    context_col = next((c for c in ["TheContext","context","Context","title","Title","כותרת","message","Message"]
+                        if c in df.columns), None)
+
+    # שאלות (תומך Question{n}Text / Q{n}OptionA..D / Q{n}CorrectAnswer)
     q_sets = []
-    for qi in [1, 2, 3]:
-        qtext_candidates = [f"Q{qi}", f"Question{qi}", f"Question{qi}Text"]
-        q_col = next((c for c in qtext_candidates if c in df.columns), None)
+    for qi in [1,2,3]:
+        q_col = next((c for c in [f"Question{qi}Text", f"Question{qi}", f"Q{qi}"] if c in df.columns), None)
         if not q_col:
             continue
-        # אופציות — שני סגנונות שמות
-        opts_style1 = [f"Q{qi}_{x}" for x in "ABCD"]           # Q1_A...
-        opts_style2 = [f"Q{qi}Option{x}" for x in "ABCD"]      # Q1OptionA...
-        present_opts = [c for c in (opts_style1 + opts_style2) if c in df.columns]
-        # תשובה נכונה — וריאנטים נפוצים
-        corr_candidates = [f"Q{qi}_correct", f"Q{qi}_Correct", f"Q{qi}Correct",
-                           f"Q{qi}CorrectAnswer"]
-        corr_col = next((c for c in corr_candidates if c in df.columns), None)
-        # סוג שאלה (רשות)
-        qtype_candidates = [f"Q{qi}_type", f"Q{qi}Type"]
-        qtype_col = next((c for c in qtype_candidates if c in df.columns), None)
+        opts = [c for c in ([f"Q{qi}Option{x}" for x in "ABCD"] + [f"Q{qi}_{x}" for x in "ABCD"])
+                if c in df.columns]
+        corr = next((c for c in [f"Q{qi}CorrectAnswer", f"Q{qi}Correct", f"Q{qi}_correct"] if c in df.columns), None)
+        qtype = next((c for c in [f"Q{qi}Type", f"Q{qi}_type"] if c in df.columns), None)
+        q_sets.append({"q": q_col, "opts": opts, "correct": corr, "qtype": qtype})
 
-        q_sets.append({"q": q_col, "opts": present_opts, "correct": corr_col, "qtype": qtype_col})
+    return {"images": image_cols, "context": context_col, "qsets": q_sets, "color_col": detect_color_column(df)}
 
-    return {
-        "images": image_cols,
-        "context": context_col,
-        "qsets": q_sets,
-        "color_col": detect_color_column(df),
-    }
 
 
 def pick_image(row: pd.Series, image_cols: List[str]) -> Optional[str]:
