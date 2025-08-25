@@ -353,7 +353,7 @@ def phase_graph(show_during_questions: bool):
     st.subheader(f"גרף {st.session_state['trial_index']+1} מתוך {len(st.session_state['all_trials'])}")
     img = t.image_path
     if img and image_exists(img):
-        st.image(img, use_column_width=True)
+        st.image(img, use_container_width=True)
     else:
         placeholder_image()
     auto_advance_if_due(DUR_GRAPH)
