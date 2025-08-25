@@ -325,7 +325,7 @@ def phase_intro(df: pd.DataFrame):
         st.session_state["trial_index"] = 0
         st.session_state["in_question_index"] = 0
         st.session_state["timeline_start"] = time.time()
-        st.experimental_rerun()
+        st.rerun()
 
 def current_trial() -> "Trial":
     idx = st.session_state["trial_index"]
@@ -374,7 +374,7 @@ def phase_context_pre():
     if st.session_state["ready_to_advance"] or st.button("המשך"):
         st.session_state["phase"] = "graph"
         st.session_state["timeline_start"] = time.time()
-        st.experimental_rerun()
+        st.rerun()
 
 def phase_graph(show_during_questions: bool):
     t = current_trial()
@@ -394,7 +394,7 @@ def phase_graph(show_during_questions: bool):
         elif group == 3:
             st.session_state["phase"] = "context_post"
         st.session_state["timeline_start"] = time.time()
-        st.experimental_rerun()
+        st.rerun()
 
 def phase_context_post():
     t = current_trial()
@@ -411,7 +411,7 @@ def phase_context_post():
             st.session_state["timeline_start"] = time.time()
         else:
             next_trial_or_phase_after_questions()
-        st.experimental_rerun()
+        st.rerun()
 
 def phase_blackout_trial():
     st.subheader("הפסקה")
@@ -420,7 +420,7 @@ def phase_blackout_trial():
     if st.session_state["ready_to_advance"] or st.button("המשך"):
         st.session_state["phase"] = "questions"
         st.session_state["timeline_start"] = time.time()
-        st.experimental_rerun()
+        st.rerun()
 
 def record_answer(trial: "Trial", q_idx: int, answer: Any, rt_sec: float, correct_value: Optional[str]):
     # correctness (supports letters A/B/C/D or full text match)
@@ -487,7 +487,7 @@ def phase_confidence():
     if col1.button("אישור"):
         record_confidence(t, val)
         next_trial_or_phase_after_questions()
-        st.experimental_rerun()
+        st.rerun()
     col2.caption("הדירוג נשמר לקובץ התוצאות.")
 
 def phase_questions(show_graph: bool):
@@ -528,7 +528,7 @@ def phase_questions(show_graph: bool):
             if st.session_state["in_question_index"] >= num_q:
                 st.session_state["in_question_index"] = 0
                 next_trial_or_phase_after_questions()
-            st.experimental_rerun()
+            st.rerun()
     with colB:
         st.button("דלג", help="מעבר ללא תשובה (למחקר בלבד)")
 
@@ -541,7 +541,7 @@ def phase_blackout_all():
         st.session_state["trial_index"] = 0
         st.session_state["in_question_index"] = 0
         st.session_state["timeline_start"] = time.time()
-        st.experimental_rerun()
+        st.rerun()
 
 def phase_all_questions():
     total = len(st.session_state["all_trials"])
@@ -579,7 +579,7 @@ def phase_all_questions():
                     st.session_state["trial_index"] = t_idx + 1
                 else:
                     st.session_state["phase"] = "summary"
-            st.experimental_rerun()
+            st.rerun()
     with colB:
         st.button("דלג", help="מעבר ללא תשובה")
 
@@ -631,7 +631,7 @@ def admin_panel():
         if st.sidebar.button("מעבר"):
             st.session_state["phase"] = sel
             st.session_state["timeline_start"] = time.time()
-            st.experimental_rerun()
+            st.rerun()
 
 # =============================
 # ---- Main --------------------
