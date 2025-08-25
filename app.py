@@ -145,7 +145,7 @@ def image_exists(path: str) -> bool:
 
 def placeholder_image():
     st.markdown('<div class="center muted">תמונה אינה זמינה — בדקו את הנתיב בעמודות V1-V4</div>', unsafe_allow_html=True)
-    st.image("https://placehold.co/800x500/EEE/AAA?text=Graph+Placeholder", use_column_width=True)
+    st.image("https://placehold.co/800x500/EEE/AAA?text=Graph+Placeholder", use_container_width=True)
 
 def show_timer(seconds_left: int, label: str):
     st.markdown(f'<div class="timer center">{label}: {seconds_left} שניות</div>', unsafe_allow_html=True)
