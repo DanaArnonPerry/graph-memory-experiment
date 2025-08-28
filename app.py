@@ -53,7 +53,7 @@ st.markdown("""
   #MainMenu {visibility:hidden !important;}
   footer {visibility:hidden !important;}
 
-  /* טיימר + פס התקדמות + כותרת גרף */
+  /* טיימר + כותרת */
   .timer-pill{
     display:inline-block; padding:6px 14px; background:#111; color:#fff;
     border-radius:18px; font-weight:700; font-size:16px;
@@ -61,9 +61,18 @@ st.markdown("""
   .progress-label{ text-align:right; direction:rtl; font-size:14px; margin:6px 0 4px; }
   .title-above-chart{ text-align:center; direction:rtl; margin:10px 0 22px; font-size:26px; font-weight:800; }
 
-  /* צבע שחור לפס ההתקדמות */
-  [data-testid="stProgressBar"] div[role="progressbar"],
-  .stProgress > div > div > div { background: #000 !important; }
+  /* === Progress bar: מסילה אפורה, מילוי שחור === */
+  /* מבנה חדש של Streamlit */
+  [data-testid="stProgressBar"] > div {        /* המסילה (הרקע) */
+    background:#e6e6e6 !important;
+  }
+  [data-testid="stProgressBar"] div[role="progressbar"]{ /* המילוי */
+    background:#000 !important;
+  }
+
+  /* נפילות לאחור לגרסאות/דפדפנים אחרים */
+  .stProgress > div > div { background:#e6e6e6 !important; }        /* המסילה */
+  .stProgress > div > div > div { background:#000 !important; }     /* המילוי */
 </style>
 """, unsafe_allow_html=True)
 
