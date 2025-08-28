@@ -59,7 +59,11 @@ st.markdown("""
     border-radius:18px; font-weight:700; font-size:16px;
   }
   .progress-label{ text-align:right; direction:rtl; font-size:14px; margin:6px 0 4px; }
-  .title-above-chart{ text-align:center; direction:rtl; margin:10px 0 6px; font-size:26px; font-weight:800; }
+  .title-above-chart{ text-align:center; direction:rtl; margin:10px 0 22px; font-size:26px; font-weight:800; }
+
+  /* צבע שחור לפס ההתקדמות */
+  [data-testid="stProgressBar"] div[role="progressbar"],
+  .stProgress > div > div > div { background: #000 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -239,7 +243,8 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
 
     # Altair
     if _HAS_ALT:
-        x_axis = alt.Axis(labelAngle=0, labelPadding=6, title=None)
+        x_axis = alt.Axis(labelAngle=0, labelPadding=6, title=None,
+                          labelFontSize=14, labelColor='#000')   # X גדול ושחור
         y_axis = alt.Axis(grid=True, tickCount=6, title=None)
 
         if has_b:
@@ -258,7 +263,8 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
                 tooltip=['Labels','series_name', alt.Tooltip('value:Q', format='.0f')]
             )
             bars = base.mark_bar()
-            labels = base.mark_text(dy=-6).encode(text=alt.Text('value:Q', format='.0f'))
+            # תוויות שחורות
+            labels = base.mark_text(color='black', dy=-6).encode(text=alt.Text('value:Q', format='.0f'))
             chart = bars + labels
         else:
             base = alt.Chart(sub[['Labels','ValuesA']]).encode(
@@ -267,14 +273,13 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
                 tooltip=['Labels', alt.Tooltip('ValuesA:Q', format='.0f')]
             )
             bars = base.mark_bar(color=col_a)
-            labels = alt.Chart(sub[['Labels','ValuesA']]).mark_text(dy=-6).encode(
+            labels = alt.Chart(sub[['Labels','ValuesA']]).mark_text(color='black', dy=-6).encode(
                 x='Labels:N', y='ValuesA:Q', text=alt.Text('ValuesA:Q', format='.0f')
             )
             chart = bars + labels
 
-        if title:
-            chart = chart.properties(title=title)
-        chart = chart.properties(height=height)
+        # רווח עליון גדול יותר כדי שלא יהיו צפופים עם הכותרת/מקרא
+        chart = chart.properties(height=height, padding={"top": 36, "left": 10, "right": 10, "bottom": 6})
         st.altair_chart(chart, use_container_width=True)
         return
 
@@ -294,14 +299,14 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
             ax.legend(loc='upper right', frameon=False)
         else:
             ax.bar(x, vals_a, width, color=col_a)
-        ax.set_xticks(list(x)); ax.set_xticklabels(labels, rotation=0, ha='center', fontsize=11)
+        ax.set_xticks(list(x)); ax.set_xticklabels(labels, rotation=0, ha='center', fontsize=14, color='black')
         ax.set_xlabel(''); ax.set_ylabel('')
         ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
         ax.grid(axis='y', linestyle='--', alpha=0.25)
-        if title: ax.set_title(title, fontsize=14, pad=12)
+        fig.subplots_adjust(top=0.90)  # עוד מרווח עליון
         def _annot(xs, ys):
             for xi, yi in zip(xs, ys):
-                ax.text(xi, yi, f"{yi:.0f}", ha='center', va='bottom', fontsize=10)
+                ax.text(xi, yi, f"{yi:.0f}", ha='center', va='bottom', fontsize=12, color='black')
         if has_b:
             _annot([i - width/2 for i in x], vals_a); _annot([i + width/2 for i in x], vals_b)
         else:
@@ -703,7 +708,18 @@ elif st.session_state.group == "G3":
                               format_func=lambda x: f"{chr(65 + opts.index(x))}. {x}")
             confidence = st.slider("", 1, 5, step=1, key=f"g3_c{qn}_{row['ChartNumber']}", label_visibility="collapsed")
             submitted = st.form_submit_button("המשך")
-        if submitted or elapsed >= QUESTION_MAX_TIME:
+
+        # חובה לבחור תשובה כדי להתקדם (אלא אם הזמן נגמר)
+        proceed = False
+        if submitted:
+            if answer is None:
+                st.warning("יש לבחור תשובה לפני המשך.")
+            else:
+                proceed = True
+        elif elapsed >= QUESTION_MAX_TIME:
+            proceed = True
+
+        if proceed:
             rt = round(elapsed, 2)
             record_answer(row, qn, answer, confidence, rt)
             log_event(f"Answer Q{qn} (G3-final)", {"chart": row['ChartNumber'], "rt": rt})
@@ -739,7 +755,7 @@ if st.session_state.stage == "end":
     df_log.to_csv(f"{results_dir}/log_{timestamp}.csv", index=False)
     st.success("הקבצים נשמרו לתיקייה experiment_results.")
 
-    # שמירה ל-Google Sheets
+    # שמירה ל-Google Sheets (אם קונפיגורציה קיימת)
     try:
         _append_df_to_gsheet(df_out, GSHEET_ID, GSHEET_RESULTS_GID)
         st.success("התוצאות נשמרו גם ל-Google Sheets ✅")
