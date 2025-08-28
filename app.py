@@ -61,18 +61,28 @@ st.markdown("""
   .progress-label{ text-align:right; direction:rtl; font-size:14px; margin:6px 0 4px; }
   .title-above-chart{ text-align:center; direction:rtl; margin:10px 0 22px; font-size:26px; font-weight:800; }
 
- /* המסילה (הרקע) – מכסה גם וריאציות שונות */
+  /* === Progress bar מותאם אישית: מסילה אפורה + מילוי שחור === */
+  .my-progress-rail{
+    height:10px;
+    background:#e6e6e6;      /* מסילה אפורה */
+    border-radius:999px;
+    overflow:hidden;
+  }
+  .my-progress-fill{
+    height:10px;
+    background:#000;         /* מילוי שחור */
+    border-radius:999px;
+    transition:width .25s ease;
+  }
+
+  /* (אפשר להשאיר את הסלקטורים הישנים; לא בשימוש אך לא מזיקים) */
   [data-testid="stProgressBar"] > div { background:#e6e6e6 !important; }
   [data-testid="stProgressBar"] [role="progressbar"] { background:#e6e6e6 !important; }
-
-  /* המילוי (הפס שזז) – כל הווריאציות האפשריות */
   [data-testid="stProgressBar"] [role="progressbar"] > div { background:#000 !important; }
   [data-testid="stProgressBar"] > div > div { background:#000 !important; }
-  [data-testid="stProgressBar"] [style*="width"] { background:#000 !important; } /* fallback גנרי */
-
-  /* נפילות לאחור לגרסאות ישנות */
-  .stProgress > div > div { background:#e6e6e6 !important; }      /* המסילה */
-  .stProgress > div > div > div { background:#000 !important; }   /* המילוי */
+  [data-testid="stProgressBar"] [style*="width"] { background:#000 !important; }
+  .stProgress > div > div { background:#e6e6e6 !important; }
+  .stProgress > div > div > div { background:#000 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -102,9 +112,20 @@ def render_header(seconds_left:int, idx:int, total:int, label:str="זמן שנו
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
         st.markdown(f"<div class='timer-pill'>{label}: {_fmt_mmss(seconds_left)} ⏳</div>", unsafe_allow_html=True)
+
     st.markdown(f"<div class='progress-label'>גרף {idx} מתוך {total}</div>", unsafe_allow_html=True)
+
+    # פס התקדמות מותאם אישית: מסילה אפורה + מילוי שחור
     prog = 0.0 if total <= 0 else idx / total
-    st.progress(min(max(prog, 0.0), 1.0))
+    pct = int(min(max(prog, 0.0), 1.0) * 100)
+    st.markdown(
+        f"""
+        <div class="my-progress-rail">
+          <div class="my-progress-fill" style="width:{pct}%;"></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 def render_chart_title(row: pd.Series):
     """מציג כותרת מהעמודה Title אם קיימת."""
@@ -710,7 +731,7 @@ elif st.session_state.group == "G3":
         elapsed = time.time() - st.session_state.q_start_time
         remaining = max(0, int(QUESTION_MAX_TIME - elapsed))
         render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן לשאלה")
-        with st.form(key=f"g3_q{qn}_{row['ChartNumber']}"):
+        with st.form(key=f"g3_q{qn}_{row['ChartNumber']}"]:
             show_rtl_text(f"שאלות סופיות — גרף {row['ChartNumber']} — שאלה {qn}/3", "h3")
             show_rtl_text(qtxt)
             answer = st.radio("", opts, key=f"g3_a{qn}_{row['ChartNumber']}", index=None, label_visibility="collapsed",
