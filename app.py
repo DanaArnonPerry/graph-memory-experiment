@@ -731,7 +731,7 @@ elif st.session_state.group == "G3":
         elapsed = time.time() - st.session_state.q_start_time
         remaining = max(0, int(QUESTION_MAX_TIME - elapsed))
         render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן לשאלה")
-        with st.form(key=f"g3_q{qn}_{row['ChartNumber']}"]:
+        with st.form(key=f"g3_q{qn}_{row['ChartNumber']}"):
             show_rtl_text(f"שאלות סופיות — גרף {row['ChartNumber']} — שאלה {qn}/3", "h3")
             show_rtl_text(qtxt)
             answer = st.radio("", opts, key=f"g3_a{qn}_{row['ChartNumber']}", index=None, label_visibility="collapsed",
