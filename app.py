@@ -61,18 +61,18 @@ st.markdown("""
   .progress-label{ text-align:right; direction:rtl; font-size:14px; margin:6px 0 4px; }
   .title-above-chart{ text-align:center; direction:rtl; margin:10px 0 22px; font-size:26px; font-weight:800; }
 
-  /* === Progress bar: מסילה אפורה, מילוי שחור === */
-  /* מבנה חדש של Streamlit */
-  [data-testid="stProgressBar"] > div {        /* המסילה (הרקע) */
-    background:#e6e6e6 !important;
-  }
-  [data-testid="stProgressBar"] div[role="progressbar"]{ /* המילוי */
-    background:#000 !important;
-  }
+ /* המסילה (הרקע) – מכסה גם וריאציות שונות */
+  [data-testid="stProgressBar"] > div { background:#e6e6e6 !important; }
+  [data-testid="stProgressBar"] [role="progressbar"] { background:#e6e6e6 !important; }
 
-  /* נפילות לאחור לגרסאות/דפדפנים אחרים */
-  .stProgress > div > div { background:#e6e6e6 !important; }        /* המסילה */
-  .stProgress > div > div > div { background:#000 !important; }     /* המילוי */
+  /* המילוי (הפס שזז) – כל הווריאציות האפשריות */
+  [data-testid="stProgressBar"] [role="progressbar"] > div { background:#000 !important; }
+  [data-testid="stProgressBar"] > div > div { background:#000 !important; }
+  [data-testid="stProgressBar"] [style*="width"] { background:#000 !important; } /* fallback גנרי */
+
+  /* נפילות לאחור לגרסאות ישנות */
+  .stProgress > div > div { background:#e6e6e6 !important; }      /* המסילה */
+  .stProgress > div > div > div { background:#000 !important; }   /* המילוי */
 </style>
 """, unsafe_allow_html=True)
 
