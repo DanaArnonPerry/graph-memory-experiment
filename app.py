@@ -1,763 +1,663 @@
-# -*- coding: utf-8 -*-
-# experiment.py — Streamlit app: ניסוי זיכרון גרפים (v1.2.0)
-# Changelog v1.2.0:
-# - תיקוני טעינת גרפים ונתיבי תמונה (IMAGES_DIR + resolver לא רגיש לאותיות)
-# - אוטורפרש לטיימרים (streamlit-autorefresh) — אין לולאות חסימה
-# - cache לטעינת קבצים (st.cache_data) + תמיכה בקובץ Excel כחלופה
-# - כתיבה ל-CSV עם ניסיונות חוזרים (robust append)
-# - התקדמות/מד תהליך + סיכום תוצאות באפליקציה
-# - תמיכה בפרמטרים ב-URL (group, randomize)
-# - שיפורי ניהול מצב וממשק
-
-import os
-import time
-import uuid
-import json
-from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
-
-import pandas as pd
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
+import pandas as pd
+import os
+import random
+import time
+from datetime import datetime
+from PIL import Image
 
-# =============================
-# ---- Configuration -----------
-# =============================
+# נסה Altair (מובנה ברוב התקנות של Streamlit); נשתמש בו כברירת מחדל
+try:
+    import altair as alt
+    _HAS_ALT = True
+except Exception:
+    _HAS_ALT = False
 
-APP_TITLE = "ניסוי זיכרון גרפים"
-VERSION = "1.2.0"
+# נסה Matplotlib לגיבוי (אם מותקן)
+try:
+    import matplotlib.pyplot as plt
+    _HAS_MPL = True
+except Exception:
+    _HAS_MPL = False
 
-# Durations (seconds) — per spec
-DUR_GRAPH = int(os.environ.get("DUR_GRAPH", 30))       # צפייה בגרף
-DUR_CONTEXT = int(os.environ.get("DUR_CONTEXT", 30))   # מסך הקשר (לפני/אחרי)
-DUR_BLACK = int(os.environ.get("DUR_BLACK", 30))       # מסך שחור / הפסקה
-DUR_ANSWER_MAX = int(os.environ.get("DUR_ANSWER_MAX", 120))  # זמן תשובה מקסימלי לשאלה
+###############################################
+# הגדרות בסיס
+###############################################
+st.set_page_config(layout="wide", page_title="ניסוי זיכרון חזותי — גרסה 2")
 
-MAX_GRAPHS = int(os.environ.get("MAX_GRAPHS", 12))     # מקסימום גרפים לניסוי
-RANDOMIZE_ORDER = os.environ.get("RANDOMIZE_ORDER", "0") == "1"  # ערבוב סדר הגרפים (אופציונלי)
-AUTOREFRESH_ENABLED = os.environ.get("AUTOREFRESH", "1") == "1"  # הפעלה/כיבוי רענון אוטומטי
+# האם להציג את תגית הקבוצה? (מוסתר לפי הדרישה)
+SHOW_GROUP_BADGE = False
 
-RESULTS_DIR = os.environ.get("RESULTS_DIR", "results")
-RESULTS_CSV = os.path.join(RESULTS_DIR, "results_local.csv")
-IMAGES_DIR = os.environ.get("IMAGES_DIR", "images")  # תיקיית תמונות ברירת מחדל
+st.markdown("""
+<style>
+  body {direction: rtl; text-align: right;}
+  .rtl {direction: rtl; text-align: right;}
 
-# Admin code — from secrets or env var
-ADMIN_CODE = st.secrets.get("app", {}).get("admin_code", None) if hasattr(st, "secrets") else None
-if not ADMIN_CODE:
-    ADMIN_CODE = os.environ.get("ADMIN_CODE", "")
+  /* הסתרת סרגל/תפריט/אייקונים עליונים של Streamlit */
+  [data-testid="stToolbar"] {display:none !important;}
+  [data-testid="stDecoration"] {display:none !important;}
+  [data-testid="stStatusWidget"] {display:none !important;}
+  .stAppDeployButton {display:none !important;}
+  header {visibility:hidden !important;}
+  #MainMenu {visibility:hidden !important;}
+  footer {visibility:hidden !important;}
 
-# =============================
-# ---- Utilities ---------------
-# =============================
+  /* תצוגת טיימר + פס התקדמות + כותרת */
+  .timer-pill{
+    display:inline-block; padding:6px 14px; background:#111; color:#fff;
+    border-radius:18px; font-weight:700; font-size:16px;
+  }
+  .progress-label{ text-align:right; direction:rtl; font-size:14px; margin:6px 0 4px; }
+  .title-above-chart{ text-align:center; direction:rtl; margin:10px 0 6px; font-size:26px; font-weight:800; }
+</style>
+""", unsafe_allow_html=True)
 
-def ensure_dirs():
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-    os.makedirs(IMAGES_DIR, exist_ok=True)
+###############################################
+# פונקציות עזר להצגה
+###############################################
 
-def rtl_css():
+def show_rtl_text(text, tag="p", size="18px"):
+    st.markdown(f"<{tag} style='direction: rtl; text-align: right; font-size:{size};'>{text}</{tag}>",
+                unsafe_allow_html=True)
+
+def show_group_badge():
+    # מוסתר לפי הדרישה — שומר על חתימת הפונקציה כדי לא לשנות את שאר הקוד
+    if not SHOW_GROUP_BADGE:
+        return
     st.markdown(
-        """
-        <style>
-        html, body, [class*="css"]  { direction: rtl; text-align: right; }
-        [data-testid="stAppViewContainer"] { direction: rtl; }
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        header {visibility: visible;}
-        .timer { font-size: 1.6rem; font-weight: 800; }
-        .muted { color: #666; }
-        .center { text-align: center; }
-        .blackout { background: black; height: 60vh; border-radius: 12px; }
-        .qbox { padding: 1rem; border: 1px solid #eee; border-radius: 12px; background:#fafafa; }
-        .small { font-size: 0.9rem;}
-        .pill { padding: 2px 8px; border-radius: 1rem; background:#eee; margin-inline-start:8px;}
-        .progress-wrap {margin: .5rem 0 1rem 0;}
-        </style>
-        """,
+        f"<div style='direction:rtl;text-align:right;padding:6px 10px;border-radius:12px;display:inline-block;background:#F1F5F9;border:1px solid #E2E8F0;margin-bottom:8px;'>"
+        f"קבוצה: <b>{st.session_state.get('group','?')}</b></div>",
         unsafe_allow_html=True
     )
 
-def now_ts() -> str:
-    return pd.Timestamp.utcnow().isoformat()
+def _fmt_mmss(sec:int)->str:
+    sec = max(0, int(sec));  m = sec // 60; s = sec % 60
+    return f"{m}:{s:02d}"
 
-def unique_participant_id() -> str:
-    pid = st.session_state.get("participant_id")
-    if not pid:
-        pid = str(uuid.uuid4())
-        st.session_state["participant_id"] = pid
-    return pid
+def render_header(seconds_left:int, idx:int, total:int, label:str="זמן שנותר"):
+    """מציג טיימר 'כדור', אחריו פס התקדמות וטקסט 'גרף X מתוך N'."""
+    c1, c2, c3 = st.columns([1,2,1])
+    with c2:
+        st.markdown(f"<div class='timer-pill'>{label}: {_fmt_mmss(seconds_left)} ⏳</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='progress-label'>גרף {idx} מתוך {total}</div>", unsafe_allow_html=True)
+    prog = 0.0 if total <= 0 else idx / total
+    st.progress(min(max(prog, 0.0), 1.0))
 
-def error_box(msg: str):
-    st.error(msg, icon="⚠️")
+def render_chart_title(row: pd.Series):
+    """מציג כותרת מעל הגרף מהעמודה Title אם קיימת."""
+    t = str(row.get("Title", "")).strip()
+    if t:
+        st.markdown(f"<div class='title-above-chart'>{t}</div>", unsafe_allow_html=True)
 
-def info_box(msg: str):
-    st.info(msg)
+def tick_and_rerun(delay: float = 1.0):
+    time.sleep(max(0.2, float(delay)))
+    st.rerun()
 
-def success_box(msg: str):
-    st.success(msg)
+###############################################
+# טעינת נתוני הניסוי ונתוני הגרפים
+###############################################
 
-def warn_box(msg: str):
-    st.warning(msg)
-
-@st.cache_data(show_spinner=False)
-def load_table_any(path_csv: str, path_xlsx: str) -> pd.DataFrame:
-    # Prefer CSV; fallback to Excel if missing
-    if os.path.exists(path_csv):
-        try:
-            # dtype=str+keep_default_na=False מבטיח שלא נקבל NaN במיספור
-            return pd.read_csv(path_csv, encoding="utf-8", dtype=str, keep_default_na=False)
-        except UnicodeDecodeError:
-            return pd.read_csv(path_csv, encoding="cp1255", dtype=str, keep_default_na=False)
-    if os.path.exists(path_xlsx):
-        return pd.read_excel(path_xlsx, dtype=str)
-    raise FileNotFoundError("לא נמצא קובץ MemoryTest.csv או MemoryTest.xlsx")
-
-def load_data_or_stop() -> pd.DataFrame:
+@st.cache_data()
+def load_memory_test():
     try:
-        df = load_table_any("MemoryTest.csv", "MemoryTest.xlsx")
+        df = pd.read_csv("MemoryTest.csv", encoding='utf-8-sig')
+        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+        required_cols = [
+            'ChartNumber','Condition','TheContext',
+            'Question1Text','Q1OptionA','Q1OptionB','Q1OptionC','Q1OptionD',
+            'Question2Text','Q2OptionA','Q2OptionB','Q2OptionC','Q2OptionD',
+            'Question3Text','Q3OptionA','Q3OptionB','Q3OptionC','Q3OptionD'
+        ]
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            st.error("חסרות עמודות בקובץ ה-CSV: " + ", ".join(missing))
+            return pd.DataFrame()
+        df.dropna(subset=['ChartNumber', 'Condition'], inplace=True)
+        for v in ["V1","V2","V3","V4"]:
+            if v not in df.columns:
+                df[v] = 1
+        return df
     except Exception as e:
-        error_box(f"שגיאה בטעינת קבצי הניסוי: {e}")
-        st.stop()
-    if df is None or df.empty:
-        error_box("קובץ הנתונים ריק.")
-        st.stop()
-    return df
+        st.error(f"שגיאה בטעינת הקובץ MemoryTest.csv: {e}")
+        return pd.DataFrame()
 
-def detect_color_column(df: pd.DataFrame) -> Optional[str]:
-    for cand in ["color","Color","colour","Colour","צבע","dominant_color","DominantColor","graph_color"]:
-        if cand in df.columns:
-            return cand
+@st.cache_data()
+def load_graph_db():
+    try:
+        db = pd.read_csv("graph_DB.csv", encoding='utf-8-sig')
+        db = db.loc[:, ~db.columns.str.contains('^Unnamed')]
+        def _to_num(x):
+            try:
+                if pd.isna(x):
+                    return None
+                s = str(x).replace(',', '').replace('%','').strip()
+                return float(s)
+            except:
+                return None
+        for col in [c for c in db.columns if c.lower().startswith('values')]:
+            db[col] = db[col].apply(_to_num)
+        if 'ID' in db.columns:
+            db['ID'] = pd.to_numeric(db['ID'], errors='coerce').astype('Int64')
+        return db
+    except Exception as e:
+        st.error(f"שגיאה בטעינת הקובץ graph_DB.csv: {e}")
+        return pd.DataFrame()
+
+def current_graph_id(row_dict):
+    for key in ("GraphID","ChartID","ID","ChartNumber"):
+        val = row_dict.get(key)
+        if pd.notna(val):
+            try:
+                return int(float(val))
+            except:
+                pass
     return None
 
-def detect_columns(df: pd.DataFrame) -> Dict[str, Any]:
-    image_cols = [c for c in df.columns if c.upper() in ["V1","V2","V3","V4"]]
-    if len(image_cols) == 0:
-        warn_box("לא נמצאו עמודות V1-V4 עבור תמונות הגרפים. יוצגו מצייני מקום.")
-    context_col = None
-    for cand in ["context","Context","CONTEXT","title","Title","כותרת","message","Message"]:
-        if cand in df.columns:
-            context_col = cand
-            break
-    q_sets = []
-    for qi in [1,2,3]:
-        q = f"Q{qi}"
-        if q in df.columns:
-            opts = [f"Q{qi}_A", f"Q{qi}_B", f"Q{qi}_C", f"Q{qi}_D"]
-            present_opts = [c for c in opts if c in df.columns]
-            correct = f"Q{qi}_correct" if f"Q{qi}_correct" in df.columns else None
-            qtype_col = f"Q{qi}_type" if f"Q{qi}_type" in df.columns else None
-            q_sets.append({"q": q, "opts": present_opts, "correct": correct, "qtype": qtype_col})
-    return {"images": image_cols, "context": context_col, "qsets": q_sets, "color_col": detect_color_column(df)}
+def get_graph_slice(graph_db: pd.DataFrame, graph_id: int):
+    if graph_db.empty or graph_id is None:
+        return pd.DataFrame()
+    if 'ID' not in graph_db.columns:
+        return pd.DataFrame()
+    return graph_db[graph_db['ID'] == graph_id].copy()
 
-def resolve_image_path(path_str: str) -> Optional[str]:
-    """
-    מנסה לפתור נתיב תמונה חכם:
-    - כתובת URL מוחזרת כפי שהיא
-    - נתיב יחסי/מוחלט כפי שהוא אם קיים
-    - אם לא קיים: חיפוש תחת IMAGES_DIR כולל השוואה לא רגישה לאותיות/סיומות נפוצות
-    """
-    if not path_str:
-        return None
-    p = str(path_str).strip()
-    if p.lower().startswith(("http://","https://")):
-        return p
-    if os.path.exists(p):
-        return p
-    candidate = os.path.join(IMAGES_DIR, p)
-    if os.path.exists(candidate):
-        return candidate
-    # case-insensitive search
-    base = os.path.basename(p)
-    root, ext = os.path.splitext(base)
-    exts = [ext] if ext else []
-    exts += [".png",".PNG",".jpg",".JPG",".jpeg",".JPEG",".webp",".WEBP"]
-    if os.path.isdir(IMAGES_DIR):
-        try:
-            for fname in os.listdir(IMAGES_DIR):
-                froot, fext = os.path.splitext(fname)
-                if froot.lower() == root.lower() and (not ext or fext in exts):
-                    return os.path.join(IMAGES_DIR, fname)
-                if fname.lower() == base.lower():
-                    return os.path.join(IMAGES_DIR, fname)
-        except Exception:
-            pass
-    return None
+def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 380):
+    if sub.empty:
+        st.warning("לא נמצאו נתונים לגרף המבוקש בקובץ graph_DB.csv")
+        return
 
-def image_exists(path: str) -> bool:
-    if not path:
-        return False
-    if path.startswith(("http://","https://")):
-        return True
-    return os.path.exists(path)
+    def _pick(col_main: str, col_alt: str, default: str):
+        if col_main in sub.columns and sub[col_main].notna().any():
+            return str(sub[col_main].dropna().iloc[0])
+        if col_alt in sub.columns and sub[col_alt].notna().any():
+            return str(sub[col_alt].dropna().iloc[0])
+        return default
 
-def placeholder_image():
-    st.markdown('<div class="center muted">תמונה אינה זמינה — בדקו את הנתיב בעמודות V1-V4</div>', unsafe_allow_html=True)
-    st.image("https://placehold.co/800x500/EEE/AAA?text=Graph+Placeholder", use_column_width=True)
+    name_a = _pick('SeriesAName', 'SeriesnameA', 'סדרה A')
+    name_b = _pick('SeriesBName', 'SeriesnameB', 'סדרה B')
 
-def show_timer(seconds_left: int, label: str):
-    st.markdown(f'<div class="timer center">{label}: {seconds_left} שניות</div>', unsafe_allow_html=True)
+    col_a = (sub['ColorA'].dropna().iloc[0]
+             if 'ColorA' in sub.columns and sub['ColorA'].notna().any() else '#4C78A8')
+    col_b = (sub['ColorB'].dropna().iloc[0]
+             if 'ColorB' in sub.columns and sub['ColorB'].notna().any() else '#F58518')
 
-def auto_tick():
-    if AUTOREFRESH_ENABLED:
-        # rerun every 1s to update timers without while-loops
-        st_autorefresh(interval=1000, key="__tick")
+    has_b = 'ValuesB' in sub.columns and sub['ValuesB'].notna().any()
 
-def init_state():
-    defaults = dict(
-        phase="intro",
-        group=None,               # 1,2,3
-        trial_index=0,            # which graph (0..N-1)
-        in_question_index=0,      # 0..(num_q-1) inside a trial
-        timeline_start=None,      # time.time() when a phase started
-        all_trials=[],            # list of trials
-        q_per_graph={1:1, 2:3, 3:3},
-        results=[],               # appended dicts
-        ready_to_advance=False,
-        admin=False,
-    )
-    for k,v in defaults.items():
-        st.session_state.setdefault(k, v)
+    if _HAS_ALT:
+        x_axis = alt.Axis(labelAngle=0, labelPadding=6, title=None)
+        y_axis = alt.Axis(grid=True, tickCount=6, title=None)
 
-def reset_all():
-    st.session_state.clear()
-    init_state()
+        if has_b:
+            df_long = sub[['Labels','ValuesA','ValuesB']].copy()
+            df_long = df_long.melt(id_vars=['Labels'], value_vars=['ValuesA','ValuesB'],
+                                   var_name='series', value_name='value')
+            df_long['series_name'] = df_long['series'].map({'ValuesA': name_a, 'ValuesB': name_b})
 
-# =============================
-# ---- Data structures --------
-# =============================
-
-@dataclass
-class Trial:
-    idx: int
-    context_text: str
-    image_path: Optional[str]
-    questions: List[Dict[str, Any]]  # each: {"text": str, "options": List[str], "correct": Optional[str], "qtype": "content"|"color"}
-    meta: Dict[str, Any]             # includes optional 'color_value'
-
-# =============================
-# ---- Experiment building ----
-# =============================
-
-def classify_qtype(text: str, explicit_type: Optional[str]) -> str:
-    if explicit_type:
-        t = str(explicit_type).strip().lower()
-        if t in ["color","צבע","colour"]:
-            return "color"
-        if t in ["content","תוכן"]:
-            return "content"
-    if "color" in text.lower() or "צבע" in text:
-        return "color"
-    return "content"
-
-def pick_image(row: pd.Series, image_cols: List[str]) -> Optional[str]:
-    for c in image_cols:
-        val = str(row.get(c, "")).strip()
-        if val and val.lower() != "nan":
-            resolved = resolve_image_path(val)
-            return resolved or val
-    return None
-
-def build_trials(df: pd.DataFrame, colmap: Dict[str, Any]) -> List[Trial]:
-    trials: List[Trial] = []
-    image_cols = colmap["images"]
-    context_col = colmap["context"]
-    qsets = colmap["qsets"]
-    color_col = colmap["color_col"]
-
-    df_ = df.iloc[:MAX_GRAPHS].copy()
-    if RANDOMIZE_ORDER:
-        df_ = df_.sample(frac=1, random_state=None).reset_index(drop=True)
-
-    for i, row in df_.iterrows():
-        ctx = str(row.get(context_col, "")).strip() if context_col else ""
-        img = pick_image(row, image_cols)
-        color_value = str(row.get(color_col, "")).strip() if color_col else ""
-        qs: List[Dict[str, Any]] = []
-        for qdef in qsets:
-            qtext = str(row.get(qdef["q"], "")).strip() if qdef["q"] in row else ""
-            opts = [str(row.get(c, "")).strip() for c in qdef["opts"]] if qdef["opts"] else []
-            opts = [o for o in opts if o != "" and o.lower() != "nan"]
-            correct = str(row.get(qdef["correct"], "")).strip() if qdef["correct"] else None
-            explicit_type = row.get(qdef.get("qtype")) if qdef.get("qtype") else None
-            qtype = classify_qtype(qtext, explicit_type)
-            qs.append({"text": qtext, "options": opts, "correct": correct, "qtype": qtype})
-        if not qs:
-            qs = [
-                {"text": "מהו המסר המרכזי של הגרף?", "options": [], "correct": None, "qtype": "content"},
-                {"text": "איזו קטגוריה גבוהה יותר?", "options": [], "correct": None, "qtype": "content"},
-                {"text": "איזה צבע הופיע בגרף?", "options": [], "correct": None, "qtype": "color"},
-            ]
-        trials.append(Trial(
-            idx=int(i),
-            context_text=ctx,
-            image_path=img,
-            questions=qs,
-            meta={**row.to_dict(), "color_value": color_value}
-        ))
-    return trials
-
-# =============================
-# ---- Persistence -------------
-# =============================
-
-def robust_append_csv(row: Dict[str, Any]):
-    ensure_dirs()
-    # attempt up to 3 times in case of transient locking
-    df = pd.DataFrame([row])
-    for attempt in range(3):
-        try:
-            if not os.path.exists(RESULTS_CSV):
-                df.to_csv(RESULTS_CSV, index=False, encoding="utf-8", lineterminator="\n")
-            else:
-                df.to_csv(RESULTS_CSV, mode="a", header=False, index=False, encoding="utf-8", lineterminator="\n")
-            return
-        except Exception as e:
-            if attempt == 2:
-                error_box(f"שגיאה בשמירת תוצאות: {e}")
-                return
-            time.sleep(0.2 * (attempt+1))
-
-def append_result(row: Dict[str, Any]):
-    st.session_state["results"].append(row)
-    robust_append_csv(row)
-
-def delay_category_for_group(group:int) -> str:
-    if group == 1: return "immediate"
-    if group == 2: return "short"
-    return "long"
-
-# =============================
-# ---- Phases ------------------
-# =============================
-
-def read_url_params():
-    qs = st.experimental_get_query_params()
-    g = qs.get("group", [None])[0]
-    rnd = qs.get("randomize", [None])[0]
-    return g, rnd
-
-def progress():
-    total = len(st.session_state.get("all_trials", [])) or 1
-    ti = st.session_state.get("trial_index", 0)
-    st.markdown('<div class="progress-wrap"></div>', unsafe_allow_html=True)
-    st.progress(min(1.0, (ti)/total))
-
-def phase_intro(df: pd.DataFrame):
-    st.header(APP_TITLE)
-    st.write("ברוכים הבאים לניסוי. קראו את ההנחיות ובחרו קבוצת ניסוי או הקצאה אקראית.")
-    with st.expander("הנחיות", expanded=True):
-        st.markdown("""
-        - תראו עד **12 גרפים**. זמני הצגה קבועים מראש.
-        - **קבוצה 1 (ביקורת):** צפייה בגרף 30 שניות → שאלה אחת מיידית (עד 2 דק').
-        - **קבוצה 2 (טווח קצר):** גרף 30 שניות → מסך שחור 30 שניות → 3 שאלות (עד 2 דק' לשאלה).
-        - **קבוצה 3 (טווח ארוך):** (הקשר → גרף → הקשר) × 12 → מסך שחור 30 שניות → 36 שאלות. לאחר כל גרף תתבקשו לדרג **רמת ביטחון** בזכירתו.
-        """)
-    col1, col2 = st.columns([1,2])
-    with col1:
-        randomize = st.checkbox("הקצאה אקראית לקבוצה")
-    with col2:
-        group = st.radio("בחרו קבוצה", [1,2,3], horizontal=True, index=0, format_func=lambda x: f"קבוצה {x}")
-
-    # URL params support
-    g, rnd = read_url_params()
-    if g and str(g).isdigit():
-        group = int(g)
-        st.caption(f"נבחרה מקבוצה ע\"י קישור: קבוצה {group}")
-    if rnd and rnd in ["1","true","True"]:
-        import random as _r
-        group = _r.choice([1,2,3])
-        st.caption(f"נבחרה אקראית (מהקישור): קבוצה {group}")
-    elif randomize:
-        import random as _r
-        group = _r.choice([1,2,3])
-        st.caption(f"נבחרה אקראית: קבוצה {group}")
-
-    name = st.text_input("שם/כינוי משתתף (אופציונלי):", value=st.session_state.get("participant_name",""))
-    if name:
-        st.session_state["participant_name"] = name
-
-    if st.button("התחלה ▶️", type="primary"):
-        st.session_state["group"] = group
-        colmap = detect_columns(df)
-        trials = build_trials(df, colmap)
-        if not trials:
-            error_box("לא נמצאו גירויים תקינים בקובץ. ודאו שקיימת לפחות שורה אחת.")
-            st.stop()
-        st.session_state["all_trials"] = trials
-        st.session_state["phase"] = "context_pre" if group in [2,3] else "graph"
-        st.session_state["trial_index"] = 0
-        st.session_state["in_question_index"] = 0
-        st.session_state["timeline_start"] = time.time()
-        st.experimental_rerun()
-
-def current_trial() -> "Trial":
-    idx = st.session_state["trial_index"]
-    return st.session_state["all_trials"][idx]
-
-def next_trial_or_phase_after_questions():
-    group = st.session_state["group"]
-    ti = st.session_state["trial_index"]
-    total = len(st.session_state["all_trials"])
-    if group in [1,2]:
-        if ti+1 < total:
-            st.session_state["trial_index"] = ti + 1
-            st.session_state["in_question_index"] = 0
-            st.session_state["phase"] = "context_pre" if group == 2 else "graph"
-            st.session_state["timeline_start"] = time.time()
-        else:
-            st.session_state["phase"] = "summary"
-    else:
-        if ti+1 < total:
-            st.session_state["trial_index"] = ti + 1
-            st.session_state["phase"] = "context_pre"
-            st.session_state["timeline_start"] = time.time()
-        else:
-            st.session_state["phase"] = "blackout_all"
-            st.session_state["timeline_start"] = time.time()
-
-def auto_advance_if_due(seconds_total: int):
-    auto_tick()
-    start = st.session_state["timeline_start"]
-    elapsed = int(time.time() - start) if start else 0
-    left = max(0, seconds_total - elapsed)
-    show_timer(left, "זמן נותר")
-    st.session_state["ready_to_advance"] = left <= 0
-    return left
-
-def phase_context_pre():
-    progress()
-    t = current_trial()
-    st.subheader("הקשר")
-    st.write(t.context_text or "אין טקסט הקשר לשורה זו.")
-    auto_advance_if_due(DUR_CONTEXT)
-    if st.session_state["ready_to_advance"] or st.button("המשך"):
-        st.session_state["phase"] = "graph"
-        st.session_state["timeline_start"] = time.time()
-        st.experimental_rerun()
-
-def phase_graph(show_during_questions: bool):
-    progress()
-    t = current_trial()
-    st.subheader(f"גרף {st.session_state['trial_index']+1} מתוך {len(st.session_state['all_trials'])}")
-    img = resolve_image_path(t.image_path) if t.image_path else None
-    if img and image_exists(img):
-        st.image(img, use_column_width=True)
-    else:
-        placeholder_image()
-    auto_advance_if_due(DUR_GRAPH)
-    if st.session_state["ready_to_advance"] or st.button("המשך"):
-        group = st.session_state["group"]
-        st.session_state["phase"] = "questions" if group == 1 else ("blackout_trial" if group == 2 else "context_post")
-        st.session_state["timeline_start"] = time.time()
-        st.experimental_rerun()
-
-def phase_context_post():
-    progress()
-    t = current_trial()
-    st.subheader("הקשר (חזרה)")
-    st.write(t.context_text or "אין טקסט הקשר לשורה זו.")
-    auto_advance_if_due(DUR_CONTEXT)
-    if st.session_state["ready_to_advance"] or st.button("המשך"):
-        if st.session_state["group"] == 3:
-            st.session_state["phase"] = "confidence"
-            st.session_state["timeline_start"] = time.time()
-        else:
-            next_trial_or_phase_after_questions()
-        st.experimental_rerun()
-
-def phase_blackout_trial():
-    progress()
-    st.subheader("הפסקה")
-    st.markdown('<div class="blackout"></div>', unsafe_allow_html=True)
-    auto_advance_if_due(DUR_BLACK)
-    if st.session_state["ready_to_advance"] or st.button("המשך"):
-        st.session_state["phase"] = "questions"
-        st.session_state["timeline_start"] = time.time()
-        st.experimental_rerun()
-
-def record_answer(trial: "Trial", q_idx: int, answer: Any, rt_sec: float, correct_value: Optional[str]):
-    is_correct = None
-    q = trial.questions[q_idx]
-    options = q.get("options") or []
-    if correct_value is not None and str(correct_value).strip() != "":
-        def normalize(s): return str(s).strip().lower()
-        ans_norm = normalize(answer)
-        corr_norm = normalize(correct_value)
-        # map A/B/C/D or א/ב/ג/ד to indices
-        letter_map = {"a":0,"b":1,"c":2,"d":3,"א":0,"ב":1,"ג":2,"ד":3}
-        corr_text = correct_value
-        if corr_norm in letter_map and options:
-            idx = letter_map[corr_norm]
-            if idx < len(options):
-                corr_text = options[idx]
-        is_correct = (ans_norm == normalize(corr_text)) or (options and ans_norm == normalize(correct_value))
-
-    row = dict(
-        ts=now_ts(),
-        app_version=VERSION,
-        record_type="answer",
-        participant_id=unique_participant_id(),
-        participant_name=st.session_state.get("participant_name",""),
-        group=st.session_state["group"],
-        delay_category=delay_category_for_group(st.session_state["group"]),
-        trial_index=st.session_state["trial_index"],
-        question_index=q_idx,
-        question_text=q.get("text",""),
-        question_type=q.get("qtype","content"),
-        answer=answer,
-        is_correct=is_correct,
-        rt_sec=round(rt_sec, 3),
-        image_path=trial.image_path or "",
-        context_text=trial.context_text or "",
-        color_shown=trial.meta.get("color_value",""),
-        meta_json=json.dumps(trial.meta, ensure_ascii=False),
-    )
-    append_result(row)
-
-def record_confidence(trial: "Trial", confidence_percent: int):
-    row = dict(
-        ts=now_ts(),
-        app_version=VERSION,
-        record_type="confidence",
-        participant_id=unique_participant_id(),
-        participant_name=st.session_state.get("participant_name",""),
-        group=st.session_state["group"],
-        trial_index=st.session_state["trial_index"],
-        confidence_percent=int(confidence_percent),
-        image_path=trial.image_path or "",
-        context_text=trial.context_text or "",
-        meta_json=json.dumps(trial.meta, ensure_ascii=False),
-    )
-    append_result(row)
-
-def phase_confidence():
-    progress()
-    t = current_trial()
-    st.subheader("הערכת זכירה")
-    st.write("דרגו עד כמה אתם בטוחים שתזכרו את הגרף הזה בהמשך (באחוזים).")
-    val = st.slider("רמת ביטחון בזכירת הגרף", 0, 100, 60, step=5, key=f"conf_{t.idx}")
-    col1, col2 = st.columns(2)
-    if col1.button("אישור"):
-        record_confidence(t, val)
-        next_trial_or_phase_after_questions()
-        st.experimental_rerun()
-    col2.caption("הדירוג נשמר לקובץ התוצאות.")
-
-def phase_questions(show_graph: bool):
-    progress()
-    group = st.session_state["group"]
-    t = current_trial()
-    if show_graph and t.image_path:
-        img = resolve_image_path(t.image_path)
-        st.image(img if img else t.image_path, use_column_width=True)
-    elif show_graph and not t.image_path:
-        placeholder_image()
-
-    num_q = st.session_state["q_per_graph"][group]
-    q_i = st.session_state["in_question_index"]
-    question = t.questions[q_i] if q_i < len(t.questions) else {"text":"", "options":[], "correct":None, "qtype":"content"}
-
-    st.subheader(f"שאלה {q_i+1} מתוך {num_q}")
-    st.markdown(f'<div class="qbox">{question.get("text","")}</div>', unsafe_allow_html=True)
-
-    start = st.session_state.get("timeline_start", time.time())
-    elapsed = time.time() - start
-    left = max(0, DUR_ANSWER_MAX - int(elapsed))
-    show_timer(left, "זמן לשאלה")
-    auto_tick()
-    too_late = left <= 0
-
-    answer_key = f"answer_{t.idx}_{q_i}"
-    if question.get("options"):
-        answer_value = st.radio("בחרו תשובה:", question["options"], key=answer_key, index=0 if question["options"] else None, horizontal=True)
-    else:
-        answer_value = st.text_input("התשובה שלכם:", key=answer_key)
-
-    colA, colB = st.columns([1,1])
-    with colA:
-        can_submit = (answer_value is not None and str(answer_value).strip() != "") or too_late
-        if st.button("שליחה", disabled=not can_submit) or too_late:
-            rt = time.time() - start
-            record_answer(t, q_i, (answer_value or ""), rt, question.get("correct"))
-            st.session_state["in_question_index"] = q_i + 1
-            st.session_state["timeline_start"] = time.time()
-            if st.session_state["in_question_index"] >= num_q:
-                st.session_state["in_question_index"] = 0
-                next_trial_or_phase_after_questions()
-            st.experimental_rerun()
-    with colB:
-        st.button("דלג", help="מעבר ללא תשובה (למחקר בלבד)")
-
-def phase_blackout_all():
-    progress()
-    st.subheader("מסך שחור — נא להמתין")
-    st.markdown('<div class="blackout"></div>', unsafe_allow_html=True)
-    auto_advance_if_due(DUR_BLACK)
-    if st.session_state["ready_to_advance"] or st.button("המשך"):
-        st.session_state["phase"] = "all_questions"
-        st.session_state["trial_index"] = 0
-        st.session_state["in_question_index"] = 0
-        st.session_state["timeline_start"] = time.time()
-        st.experimental_rerun()
-
-def phase_all_questions():
-    progress()
-    total = len(st.session_state["all_trials"])
-    t_idx = st.session_state["trial_index"]
-    q_i = st.session_state["in_question_index"]
-    t = current_trial()
-    num_q = 3  # per spec
-    st.subheader(f"שאלות — גרף {t_idx+1} מתוך {total}, שאלה {q_i+1} מתוך {num_q}")
-    question = t.questions[q_i] if q_i < len(t.questions) else {"text":"", "options":[], "correct":None, "qtype":"content"}
-    st.markdown(f'<div class="qbox">{question.get("text","")}</div>', unsafe_allow_html=True)
-
-    start = st.session_state.get("timeline_start", time.time())
-    elapsed = time.time() - start
-    left = max(0, DUR_ANSWER_MAX - int(elapsed))
-    show_timer(left, "זמן לשאלה")
-    auto_tick()
-    too_late = left <= 0
-
-    answer_key = f"answer_all_{t.idx}_{q_i}"
-    if question.get("options"):
-        answer_value = st.radio("בחרו תשובה:", question["options"], key=answer_key, index=0 if question["options"] else None, horizontal=True)
-    else:
-        answer_value = st.text_input("התשובה שלכם:", key=answer_key)
-
-    colA, colB = st.columns([1,1])
-    with colA:
-        can_submit = (answer_value is not None and str(answer_value).strip() != "") or too_late
-        if st.button("שליחה", disabled=not can_submit) or too_late:
-            rt = time.time() - start
-            record_answer(t, q_i, (answer_value or ""), rt, question.get("correct"))
-            st.session_state["in_question_index"] = q_i + 1
-            st.session_state["timeline_start"] = time.time()
-            if st.session_state["in_question_index"] >= num_q:
-                st.session_state["in_question_index"] = 0
-                if t_idx + 1 < total:
-                    st.session_state["trial_index"] = t_idx + 1
-                else:
-                    st.session_state["phase"] = "summary"
-            st.experimental_rerun()
-    with colB:
-        st.button("דלג", help="מעבר ללא תשובה")
-
-def phase_summary():
-    st.header("סיום הניסוי ✅")
-    st.write("תודה רבה על השתתפותכם!")
-    ensure_dirs()
-    # Inline summary stats
-    if st.session_state.get("results"):
-        df = pd.DataFrame(st.session_state["results"])
-        with st.expander("סיכום מהיר", expanded=True):
-            st.write("תשובות:", len(df[df["record_type"]=="answer"]))
-            if "is_correct" in df.columns:
-                acc = df[df["record_type"]=="answer"]["is_correct"].dropna()
-                if not acc.empty:
-                    st.write(f"דיוק ממוצע: {round(100*acc.mean(),1)}%")
-            if "question_type" in df.columns:
-                st.write(df[df["record_type"]=="answer"].groupby(["question_type"])["is_correct"].mean().rename("דיוק ממוצע לפי סוג").to_frame())
-    if os.path.exists(RESULTS_CSV):
-        st.download_button(
-            "הורדת נתונים (CSV)",
-            data=open(RESULTS_CSV, "rb").read(),
-            file_name=os.path.basename(RESULTS_CSV),
-            mime="text/csv"
-        )
-    st.write("ניתן לסגור את החלון.")
-
-# =============================
-# ---- Admin -------------------
-# =============================
-
-def admin_panel():
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("מסך מנהל 🛠️")
-    code = st.sidebar.text_input("קוד מנהל", type="password")
-    if st.sidebar.button("כניסה"):
-        if code and ADMIN_CODE and code == ADMIN_CODE:
-            st.session_state["admin"] = True
-        else:
-            warn_box("קוד מנהל שגוי או לא הוגדר.")
-    if st.session_state.get("admin", False):
-        st.sidebar.success("מצב מנהל פעיל")
-        st.sidebar.button("איפוס ניסוי", on_click=reset_all)
-        st.sidebar.write(f"משתתף: `{unique_participant_id()}`")
-        if os.path.exists(RESULTS_CSV):
-            st.sidebar.download_button(
-                "הורדת תוצאות",
-                data=open(RESULTS_CSV, "rb").read(),
-                file_name=os.path.basename(RESULTS_CSV),
-                mime="text/csv"
+            base = alt.Chart(df_long).encode(
+                x=alt.X('Labels:N', sort=None, axis=x_axis),
+                y=alt.Y('value:Q', axis=y_axis),
+                color=alt.Color('series_name:N',
+                                scale=alt.Scale(domain=[name_a, name_b], range=[col_a, col_b]),
+                                legend=alt.Legend(orient='top-right', title=None)),
+                xOffset='series_name:N',
+                tooltip=['Labels', 'series_name', alt.Tooltip('value:Q', format='.0f')]
             )
-        st.sidebar.markdown("### מצב")
-        st.sidebar.code(f"RANDOMIZE_ORDER={RANDOMIZE_ORDER}, AUTOREFRESH={AUTOREFRESH_ENABLED}")
-        st.sidebar.markdown("### הגדרות זמנים")
-        st.sidebar.caption("שינוי ערכים דורש הרצה מחדש של האפליקציה (דרך משתני סביבה).")
-        st.sidebar.code(f"""DUR_GRAPH={DUR_GRAPH}\nDUR_CONTEXT={DUR_CONTEXT}\nDUR_BLACK={DUR_BLACK}\nDUR_ANSWER_MAX={DUR_ANSWER_MAX}\nMAX_GRAPHS={MAX_GRAPHS}\nIMAGES_DIR={IMAGES_DIR}""")
-        st.sidebar.markdown("### קפיצה שלב")
-        phases = ["intro","context_pre","graph","context_post","confidence","blackout_trial","questions","blackout_all","all_questions","summary"]
-        sel = st.sidebar.selectbox("בחר שלב", phases, index=phases.index(st.session_state["phase"]))
-        if st.sidebar.button("מעבר"):
-            st.session_state["phase"] = sel
-            st.session_state["timeline_start"] = time.time()
-            st.experimental_rerun()
+            bars = base.mark_bar()
+            labels = base.mark_text(dy=-6).encode(text=alt.Text('value:Q', format='.0f'))
+            chart = bars + labels
+        else:
+            base = alt.Chart(sub[['Labels','ValuesA']]).encode(
+                x=alt.X('Labels:N', sort=None, axis=x_axis),
+                y=alt.Y('ValuesA:Q', axis=y_axis),
+                tooltip=['Labels', alt.Tooltip('ValuesA:Q', format='.0f')]
+            )
+            bars = base.mark_bar(color=col_a)
+            labels = alt.Chart(sub[['Labels','ValuesA']]).mark_text(dy=-6).encode(
+                x='Labels:N', y='ValuesA:Q', text=alt.Text('ValuesA:Q', format='.0f')
+            )
+            chart = bars + labels
 
-# =============================
-# ---- Main --------------------
-# =============================
+        if title:
+            chart = chart.properties(title=title)
+        chart = chart.properties(height=height)
+        st.altair_chart(chart, use_container_width=True)
+        return
 
-def main():
-    st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="collapsed", page_icon="📊")
-    rtl_css()
-    ensure_dirs()
-    init_state()
-    admin_panel()
-    st.caption(f"גרסה {VERSION}")
+    if _HAS_MPL:
+        labels = sub['Labels'].astype(str).tolist() if 'Labels' in sub.columns else [str(i) for i in range(len(sub))]
+        vals_a = sub['ValuesA'].fillna(0).tolist() if 'ValuesA' in sub.columns else [0]*len(labels)
+        x = range(len(labels))
+        if has_b:
+            vals_b = sub['ValuesB'].fillna(0).tolist()
+            width = 0.38
+        else:
+            vals_b = None
+            width = 0.55
+        fig, ax = plt.subplots(figsize=(min(14, max(8, len(labels)*0.8)), height/96))
+        if has_b:
+            ax.bar([i - width/2 for i in x], vals_a, width, label=name_a, color=col_a)
+            ax.bar([i + width/2 for i in x], vals_b, width, label=name_b, color=col_b)
+            ax.legend(loc='upper right', frameon=False)
+        else:
+            ax.bar(x, vals_a, width, color=col_a)
+        ax.set_xticks(list(x))
+        ax.set_xticklabels(labels, rotation=0, ha='center', fontsize=11)
+        ax.set_xlabel('')
+        ax.set_ylabel('')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(axis='y', linestyle='--', alpha=0.25)
+        if title:
+            ax.set_title(title, fontsize=14, pad=12)
+        def _annot(xs, ys):
+            for xi, yi in zip(xs, ys):
+                ax.text(xi, yi, f"{yi:.0f}", ha='center', va='bottom', fontsize=10)
+        if has_b:
+            _annot([i - width/2 for i in x], vals_a)
+            _annot([i + width/2 for i in x], vals_b)
+        else:
+            _annot(list(x), vals_a)
+        st.pyplot(fig, clear_figure=True)
+        return
 
-    df = load_data_or_stop()
-    colmap = detect_columns(df)
-    # Validate images quickly (first few only)
-    if colmap["images"]:
-        missing = 0
-        for raw in df[colmap["images"]].fillna("").astype(str).values.flatten().tolist()[:20]:
-            if not raw:
-                continue
-            resolved = resolve_image_path(raw)
-            if not resolved:
-                missing += 1
-        if missing > 0:
-            warn_box("נמצאו נתיבי תמונות שלא נמצאו בתיקייה. ודאו שהקבצים קיימים תחת 'images/'.")
-
-    # Router
-    phase = st.session_state["phase"]
-    group = st.session_state["group"]
-    if phase == "intro":
-        phase_intro(df); return
-
-    if not st.session_state.get("all_trials"):
-        st.session_state["all_trials"] = build_trials(df, colmap)
-
-    if phase == "context_pre":
-        phase_context_pre()
-    elif phase == "graph":
-        phase_graph(show_during_questions=(group in [1,2]))
-    elif phase == "context_post":
-        phase_context_post()
-    elif phase == "confidence":
-        phase_confidence()
-    elif phase == "blackout_trial":
-        phase_blackout_trial()
-    elif phase == "questions":
-        phase_questions(show_graph=(group in [1,2]))
-    elif phase == "blackout_all":
-        phase_blackout_all()
-    elif phase == "all_questions":
-        phase_all_questions()
-    elif phase == "summary":
-        phase_summary()
+    if has_b:
+        data = sub[['Labels','ValuesA','ValuesB']].copy()
+        data.rename(columns={'ValuesA': name_a, 'ValuesB': name_b}, inplace=True)
     else:
-        warn_box("שלב לא מוכר — מאפסים את הניסוי.")
-        reset_all()
+        data = sub[['Labels','ValuesA']].copy()
+        data.rename(columns={'ValuesA': name_a}, inplace=True)
+    st.bar_chart(data.set_index('Labels'))
 
-if __name__ == "__main__":
-    main()
+###############################################
+# טעינה
+###############################################
+
+is_dev_mode = st.sidebar.checkbox("מצב פיתוח", key="dev_mode", value=False)
+if is_dev_mode and st.sidebar.button("רענון נתונים (ניקוי קאש)"):
+    st.cache_data.clear()
+    st.rerun()
+
+df = load_memory_test()
+if df.empty:
+    st.stop()
+
+graph_db = load_graph_db()
+if graph_db.empty:
+    st.warning("קובץ graph_DB.csv לא נטען — הצגת הגרפים תוגבל.")
+
+###############################################
+# קביעת וריאציה וסינון
+###############################################
+if "variation" not in st.session_state:
+    st.session_state.variation = random.choice(["V1","V2","V3","V4"])
+
+if "filtered_df" not in st.session_state:
+    st.session_state.filtered_df = df[df[st.session_state.variation] == 1].reset_index(drop=True)
+    if st.session_state.filtered_df.empty:
+        st.error(f"אין נתונים בתנאי {st.session_state.variation}. אנא בדוק את קובץ ה-CSV.")
+        st.stop()
+
+TOTAL_GRAPHS = len(st.session_state.filtered_df)
+
+###############################################
+# פרמטרים לניסוי
+###############################################
+DISPLAY_TIME_GRAPH = st.sidebar.number_input("זמן תצוגת גרף (שניות)", min_value=1, max_value=60, value=5) if is_dev_mode else 5
+QUESTION_MAX_TIME = st.sidebar.number_input("זמן מירבי לשאלה (שניות)", min_value=10, max_value=600, value=120) if is_dev_mode else 120
+
+###############################################
+# בחירת קבוצה (תנאי)
+###############################################
+if "group" not in st.session_state:
+    try:
+        qp = st.query_params
+        group_param = qp.get("group", None)
+    except Exception:
+        qp = st.experimental_get_query_params()
+        group_param = qp.get("group", [None])[0]
+    st.session_state.group = group_param if group_param in ("G1","G2","G3") else random.choice(["G1","G2","G3"])
+
+if is_dev_mode:
+    new_group = st.sidebar.selectbox("בחר קבוצה (תנאי)", ["G1","G2","G3"],
+                                     index=["G1","G2","G3"].index(st.session_state.group))
+    if new_group != st.session_state.group and st.sidebar.button("החל קבוצה"):
+        st.session_state.group = new_group
+        st.session_state.stage = "welcome"
+        st.session_state.graph_index = 0
+        st.session_state.question_index = 0
+        st.session_state.responses = []
+        st.session_state.phase = None
+        st.session_state.display_start_time = None
+        st.session_state.q_start_time = None
+        st.rerun()
+
+###############################################
+# אתחול מצב
+###############################################
+if "stage" not in st.session_state:
+    st.session_state.stage = "welcome"
+if "graph_index" not in st.session_state:
+    st.session_state.graph_index = 0
+if "question_index" not in st.session_state:
+    st.session_state.question_index = 0
+if "responses" not in st.session_state:
+    st.session_state.responses = []
+if "phase" not in st.session_state:
+    st.session_state.phase = None
+if "display_start_time" not in st.session_state:
+    st.session_state.display_start_time = None
+if "q_start_time" not in st.session_state:
+    st.session_state.q_start_time = None
+
+###############################################
+# לוג
+###############################################
+def log_event(action, extra=None):
+    if "log" not in st.session_state:
+        st.session_state.log = []
+    st.session_state.log.append({
+        "timestamp": datetime.now().isoformat(),
+        "stage": st.session_state.get("stage"),
+        "group": st.session_state.get("group"),
+        "graph_index": st.session_state.get("graph_index"),
+        "question_index": st.session_state.get("question_index"),
+        "action": action,
+        "extra": extra
+    })
+
+###############################################
+# ווידג'טים מסייעים
+###############################################
+if is_dev_mode:
+    st.sidebar.markdown(f"### גרף נוכחי: {st.session_state.graph_index+1}/{TOTAL_GRAPHS}")
+    jump_idx = st.sidebar.number_input("דלג לגרף #", min_value=1, max_value=TOTAL_GRAPHS,
+                                       value=st.session_state.graph_index+1)
+    if st.sidebar.button("דלג"):
+        st.session_state.graph_index = jump_idx - 1
+        st.session_state.stage = "context" if st.session_state.group in ["G1","G2"] else "g3_show"
+        st.rerun()
+
+###############################################
+# פונקציות זרימה
+###############################################
+def save_and_advance_graph():
+    if st.session_state.graph_index + 1 >= TOTAL_GRAPHS:
+        if st.session_state.group == "G3" and st.session_state.phase == "show":
+            st.session_state.phase = "questions"
+            st.session_state.stage = "g3_questions"
+            st.session_state.graph_index = 0
+            st.session_state.question_index = 0
+        else:
+            st.session_state.stage = "end"
+    else:
+        st.session_state.graph_index += 1
+        st.session_state.stage = "context" if st.session_state.group in ("G1","G2") else "g3_show"
+
+def record_answer(row, qn, answer, confidence, rt):
+    payload = {
+        "ChartNumber": row.get("ChartNumber"),
+        "Condition": row.get("Condition"),
+        "GraphID": current_graph_id(row),
+        "group": st.session_state.group,
+        "variation": st.session_state.variation,
+        "timestamp": datetime.now().isoformat(),
+        "question": int(qn),
+        "question_text": row.get(f"Question{qn}Text"),
+        "answer": answer,
+        "rt": rt,
+        "phase": st.session_state.phase
+    }
+    if confidence is not None:
+        payload["confidence"] = confidence
+    st.session_state.responses.append(payload)
+
+###############################################
+# מסך פתיחה
+###############################################
+if st.session_state.stage == "welcome":
+    show_group_badge()  # לא יציג בפועל (מוסתר)
+    show_rtl_text("שלום וברוכ/ה הבא/ה לניסוי בזיכרון חזותי!", "h2")
+    if st.session_state.group == "G1":
+        show_rtl_text("בתנאי זה יוצג תחילה הקשר, לאחר מכן גרף ל-5 שניות, ואז שתי שאלות (כל אחת עד 2 דקות) עם הגרף מעל השאלה.")
+    elif st.session_state.group == "G2":
+        show_rtl_text("בתנאי זה יוצג הקשר, יוצג הגרף ל-5 שניות, ואז שלוש שאלות ללא הצגת הגרף.")
+    else:
+        show_rtl_text("בתנאי זה כל הגרפים יוצגו ל-5 שניות כל אחד עם שאלת הערכת זכירה; בסוף תענו על כל 36 השאלות ללא הצגת הגרפים.")
+
+    if st.button("התחל"):
+        log_event("Start Experiment", {"group": st.session_state.group})
+        if st.session_state.group in ["G1","G2"]:
+            st.session_state.stage = "context"
+        else:
+            st.session_state.phase = "show"
+            st.session_state.stage = "g3_show"
+        st.rerun()
+
+###############################################
+# G1 — הקשר > גרף (מ-db) > Q1 > Q2 (עם הגרף מעל השאלה)
+###############################################
+elif st.session_state.group == "G1":
+    row = st.session_state.filtered_df.iloc[st.session_state.graph_index]
+    graph_id = current_graph_id(row)
+    sub = get_graph_slice(graph_db, graph_id)
+
+    if st.session_state.stage == "context":
+        show_group_badge()
+        show_rtl_text("הקשר לגרף הבא:", "h3")
+        show_rtl_text(row.get("TheContext", ""))
+        if st.button("המשך לגרף"):
+            st.session_state.stage = "image"
+            st.session_state.display_start_time = time.time()
+            log_event("Show Context", {"chart": row['ChartNumber'], "graph_id": graph_id})
+            st.rerun()
+
+    elif st.session_state.stage == "image":
+        show_group_badge()
+        elapsed = time.time() - st.session_state.display_start_time
+        remaining = max(0, int(DISPLAY_TIME_GRAPH - elapsed))
+        render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן תצוגה נותר")
+        render_chart_title(row)
+        draw_bar_chart(sub)
+        if elapsed >= DISPLAY_TIME_GRAPH:
+            st.session_state.stage = "q1"
+            st.session_state.q_start_time = time.time()
+            st.rerun()
+        else:
+            tick_and_rerun(1.0)
+
+    elif st.session_state.stage in ["q1","q2"]:
+        show_group_badge()
+        qn = 1 if st.session_state.stage == "q1" else 2
+        qtxt = row[f"Question{qn}Text"]
+        opts = [row[f"Q{qn}OptionA"], row[f"Q{qn}OptionB"], row[f"Q{qn}OptionC"], row[f"Q{qn}OptionD"]]
+        elapsed = time.time() - (st.session_state.q_start_time or time.time())
+        remaining = max(0, int(QUESTION_MAX_TIME - elapsed))
+        render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן לשאלה")
+        render_chart_title(row)
+        draw_bar_chart(sub)
+        with st.form(key=f"g1_q{qn}_{row['ChartNumber']}"):
+            show_rtl_text(f"גרף {row['ChartNumber']} — שאלה {qn}", "h3")
+            show_rtl_text(qtxt)
+            answer = st.radio("", opts, key=f"g1_a{qn}_{row['ChartNumber']}", index=None, label_visibility="collapsed",
+                              format_func=lambda x: f"{chr(65 + opts.index(x))}. {x}")
+            submitted = st.form_submit_button("המשך")
+        if submitted or elapsed >= QUESTION_MAX_TIME:
+            rt = round(elapsed, 2)
+            record_answer(row, qn, answer, None, rt)
+            log_event(f"Answer Q{qn}", {"chart": row['ChartNumber'], "rt": rt})
+            if st.session_state.stage == "q1":
+                st.session_state.stage = "q2"
+                st.session_state.q_start_time = time.time()
+            else:
+                save_and_advance_graph()
+            st.rerun()
+        else:
+            tick_and_rerun(1.0)
+
+###############################################
+# G2 — הקשר > גרף (מ-db, 5ש') > Q1..Q3 (ללא הגרף בשאלות)
+###############################################
+elif st.session_state.group == "G2":
+    row = st.session_state.filtered_df.iloc[st.session_state.graph_index]
+    graph_id = current_graph_id(row)
+    sub = get_graph_slice(graph_db, graph_id)
+
+    if st.session_state.stage == "context":
+        show_group_badge()
+        st.session_state.question_index = 0
+        show_rtl_text("הקשר לגרף הבא:", "h3")
+        show_rtl_text(row.get("TheContext", ""))
+        if st.button("המשך לגרף"):
+            st.session_state.stage = "g2_image"
+            st.session_state.display_start_time = time.time()
+            log_event("Show Context (G2)", {"chart": row['ChartNumber'], "graph_id": graph_id})
+            st.rerun()
+
+    elif st.session_state.stage == "g2_image":
+        show_group_badge()
+        elapsed = time.time() - st.session_state.display_start_time
+        remaining = max(0, int(DISPLAY_TIME_GRAPH - elapsed))
+        render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן תצוגה נותר")
+        render_chart_title(row)
+        draw_bar_chart(sub)
+        if elapsed >= DISPLAY_TIME_GRAPH:
+            st.session_state.stage = "g2_q"
+            st.session_state.q_start_time = time.time()
+            st.rerun()
+        else:
+            tick_and_rerun(1.0)
+
+    elif st.session_state.stage == "g2_q":
+        show_group_badge()
+        qn = st.session_state.question_index + 1
+        qtxt = row[f"Question{qn}Text"]
+        opts = [row[f"Q{qn}OptionA"], row[f"Q{qn}OptionB"], row[f"Q{qn}OptionC"], row[f"Q{qn}OptionD"]]
+        elapsed = time.time() - (st.session_state.q_start_time or time.time())
+        remaining = max(0, int(QUESTION_MAX_TIME - elapsed))
+        render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן לשאלה")
+        # *** אין גרף כאן — רק טופס השאלה ***
+        with st.form(key=f"g2_q{qn}_{row['ChartNumber']}"):
+            show_rtl_text(f"גרף {row['ChartNumber']} — שאלה {qn}", "h3")
+            show_rtl_text(qtxt)
+            answer = st.radio("", opts, key=f"g2_a{qn}_{row['ChartNumber']}", index=None, label_visibility="collapsed",
+                              format_func=lambda x: f"{chr(65 + opts.index(x))}. {x}")
+            submitted = st.form_submit_button("המשך")
+        if submitted or elapsed >= QUESTION_MAX_TIME:
+            rt = round(elapsed, 2)
+            record_answer(row, qn, answer, None, rt)
+            log_event(f"Answer Q{qn} (G2)", {"chart": row['ChartNumber'], "rt": rt})
+            st.session_state.question_index += 1
+            if st.session_state.question_index >= 3:
+                st.session_state.question_index = 0
+                save_and_advance_graph()
+            else:
+                st.session_state.q_start_time = time.time()
+            st.rerun()
+        else:
+            tick_and_rerun(1.0)
+
+###############################################
+# G3 — הצגת כל הגרפים (מ-db) + הערכת זכירה, ואז כל השאלות
+###############################################
+elif st.session_state.group == "G3":
+    row = st.session_state.filtered_df.iloc[st.session_state.graph_index]
+    graph_id = current_graph_id(row)
+    sub = get_graph_slice(graph_db, graph_id)
+
+    if st.session_state.stage == "g3_show" and st.session_state.phase == "show":
+        show_group_badge()
+        elapsed = 0 if st.session_state.display_start_time is None else time.time() - st.session_state.display_start_time
+        remaining = max(0, int(DISPLAY_TIME_GRAPH - elapsed))
+        render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן תצוגה נותר")
+        render_chart_title(row)
+        draw_bar_chart(sub)
+        if st.session_state.display_start_time is None:
+            st.session_state.display_start_time = time.time()
+            log_event("Show Graph (G3)", {"chart": row['ChartNumber'], "graph_id": graph_id})
+        elapsed = time.time() - st.session_state.display_start_time
+        if elapsed >= DISPLAY_TIME_GRAPH:
+            st.session_state.stage = "g3_eval"
+            st.session_state.display_start_time = None
+            st.rerun()
+        else:
+            tick_and_rerun(1.0)
+
+    elif st.session_state.stage == "g3_eval" and st.session_state.phase == "show":
+        show_group_badge()
+        with st.form(key=f"g3_eval_{row['ChartNumber']}"):
+            show_rtl_text("שאלת הערכה: באיזו מידה את/ה חושב/ת שתזכור/י את הנתונים בעוד כשעתיים? (1-5)", "h3")
+            memory = st.slider("", 1, 5, step=1, key=f"g3_mem_{row['ChartNumber']}", label_visibility="collapsed")
+            submitted = st.form_submit_button("המשך")
+        if submitted:
+            st.session_state.responses.append({
+                "ChartNumber": row["ChartNumber"],
+                "Condition": row["Condition"],
+                "GraphID": graph_id,
+                "group": st.session_state.group,
+                "variation": st.session_state.variation,
+                "timestamp": datetime.now().isoformat(),
+                "phase": "show",
+                "memory_estimate": memory
+            })
+            log_event("Memory Estimate (G3)", {"chart": row['ChartNumber'], "estimate": memory})
+            save_and_advance_graph()
+            st.rerun()
+
+    elif st.session_state.stage == "g3_questions" and st.session_state.phase == "questions":
+        show_group_badge()
+        qn = st.session_state.question_index + 1
+        qtxt = row[f"Question{qn}Text"]
+        opts = [row[f"Q{qn}OptionA"], row[f"Q{qn}OptionB"], row[f"Q{qn}OptionC"], row[f"Q{qn}OptionD"]]
+        if st.session_state.q_start_time is None:
+            st.session_state.q_start_time = time.time()
+        elapsed = time.time() - st.session_state.q_start_time
+        remaining = max(0, int(QUESTION_MAX_TIME - elapsed))
+        render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן לשאלה")
+        with st.form(key=f"g3_q{qn}_{row['ChartNumber']}"):
+            show_rtl_text(f"שאלות סופיות — גרף {row['ChartNumber']} — שאלה {qn}/3", "h3")
+            show_rtl_text(qtxt)
+            answer = st.radio("", opts, key=f"g3_a{qn}_{row['ChartNumber']}", index=None, label_visibility="collapsed",
+                              format_func=lambda x: f"{chr(65 + opts.index(x))}. {x}")
+            confidence = st.slider("", 1, 5, step=1, key=f"g3_c{qn}_{row['ChartNumber']}", label_visibility="collapsed")
+            submitted = st.form_submit_button("המשך")
+        if submitted or elapsed >= QUESTION_MAX_TIME:
+            rt = round(elapsed, 2)
+            record_answer(row, qn, answer, confidence, rt)
+            log_event(f"Answer Q{qn} (G3-final)", {"chart": row['ChartNumber'], "rt": rt})
+            st.session_state.question_index += 1
+            if st.session_state.question_index >= 3:
+                st.session_state.question_index = 0
+                if st.session_state.graph_index + 1 >= TOTAL_GRAPHS:
+                    st.session_state.stage = "end"
+                else:
+                    st.session_state.graph_index += 1
+                    st.session_state.q_start_time = None
+            else:
+                st.session_state.q_start_time = time.time()
+            st.rerun()
+        else:
+            tick_and_rerun(1.0)
+
+###############################################
+# סיום ושמירה
+###############################################
+if st.session_state.stage == "end":
+    show_group_badge()
+    show_rtl_text("הניסוי הסתיים, תודה רבה!", "h2")
+    df_out = pd.DataFrame(st.session_state.responses)
+    df_log = pd.DataFrame(st.session_state.log if 'log' in st.session_state else [])
+    results_dir = "experiment_results"
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    df_out.to_csv(f"{results_dir}/results_{timestamp}.csv", index=False)
+    df_log.to_csv(f"{results_dir}/log_{timestamp}.csv", index=False)
+    st.success("הקבצים נשמרו לתיקייה experiment_results.")
+
+    if is_dev_mode and st.sidebar.checkbox("הצג כפתורי הורדה (למנהל מערכת בלבד)", key="admin_download", value=False):
+        admin_password = st.sidebar.text_input("סיסמת מנהל:", type="password", key="admin_pw")
+        if admin_password == "admin123":
+            st.sidebar.download_button("הורד תוצאות (CSV)", df_out.to_csv(index=False), "results.csv", "text/csv")
+            st.sidebar.download_button("הורד לוג (CSV)", df_log.to_csv(index=False), "log.csv", "text/csv")
+            st.sidebar.success("ברוך/ה הבא/ה, מנהל/ת!")
+        elif admin_password:
+            st.sidebar.error("סיסמה שגויה")
