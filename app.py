@@ -61,21 +61,7 @@ st.markdown("""
   .progress-label{ text-align:right; direction:rtl; font-size:14px; margin:6px 0 4px; }
   .title-above-chart{ text-align:center; direction:rtl; margin:10px 0 22px; font-size:26px; font-weight:800; }
 
-  /* === Progress bar מותאם אישית: מסילה אפורה + מילוי שחור === */
-  .my-progress-rail{
-    height:10px;
-    background:#e6e6e6;      /* מסילה אפורה */
-    border-radius:999px;
-    overflow:hidden;
-  }
-  .my-progress-fill{
-    height:10px;
-    background:#000;         /* מילוי שחור */
-    border-radius:999px;
-    transition:width .25s ease;
-  }
-
-  /* (אפשר להשאיר את הסלקטורים הישנים; לא בשימוש אך לא מזיקים) */
+  /* פס התקדמות: מסילה אפורה, מילוי שחור */
   [data-testid="stProgressBar"] > div { background:#e6e6e6 !important; }
   [data-testid="stProgressBar"] [role="progressbar"] { background:#e6e6e6 !important; }
   [data-testid="stProgressBar"] [role="progressbar"] > div { background:#000 !important; }
@@ -83,6 +69,25 @@ st.markdown("""
   [data-testid="stProgressBar"] [style*="width"] { background:#000 !important; }
   .stProgress > div > div { background:#e6e6e6 !important; }
   .stProgress > div > div > div { background:#000 !important; }
+
+  /* יישור שאלות וטפסים לימין (כולל אפשרויות רדיו) */
+  [data-testid="stForm"] { direction: rtl; text-align: right; }
+  [data-testid="stForm"] .stMarkdown p { text-align: right !important; }
+  [data-testid="stRadio"] { direction: rtl; }
+  [data-testid="stRadio"] div[role="radiogroup"]{
+    direction: rtl;
+    display:flex; flex-direction:column; align-items:flex-end;
+    text-align:right;
+  }
+  /* מבנה ה-baseweb של הרדיו — כדי שהעיגול יופיע מימין לטקסט */
+  [data-baseweb="radio"] { direction: rtl; }
+  [data-baseweb="radio"] label{
+    direction: rtl; justify-content:flex-end;
+    display:flex; align-items:center;
+  }
+  [data-baseweb="radio"] label > div{
+    margin-left:0 !important; margin-right:.5rem !important;
+  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -112,20 +117,9 @@ def render_header(seconds_left:int, idx:int, total:int, label:str="זמן שנו
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
         st.markdown(f"<div class='timer-pill'>{label}: {_fmt_mmss(seconds_left)} ⏳</div>", unsafe_allow_html=True)
-
     st.markdown(f"<div class='progress-label'>גרף {idx} מתוך {total}</div>", unsafe_allow_html=True)
-
-    # פס התקדמות מותאם אישית: מסילה אפורה + מילוי שחור
     prog = 0.0 if total <= 0 else idx / total
-    pct = int(min(max(prog, 0.0), 1.0) * 100)
-    st.markdown(
-        f"""
-        <div class="my-progress-rail">
-          <div class="my-progress-fill" style="width:{pct}%;"></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.progress(min(max(prog, 0.0), 1.0))
 
 def render_chart_title(row: pd.Series):
     """מציג כותרת מהעמודה Title אם קיימת."""
@@ -250,9 +244,16 @@ def get_graph_slice(graph_db: pd.DataFrame, graph_id: int):
 # ציור גרף
 # =========================================================
 def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 380):
+    """
+    - יישור תוויות/צירים: כבר מטופל.
+    - רוחב עמודות הוקטן ~40% מהרוחב הרגיל.
+    """
     if sub.empty:
         st.warning("לא נמצאו נתונים לגרף בקובץ graph_DB.csv")
         return
+
+    BAR_BAND = 0.40  # קצת פחות מחצי מהרוחב הרגיל (Altair)
+    BAR_SIZE = 20    # גיבוי נוסף ל-Altair (פיקסלים)
 
     def _pick(col_main: str, col_alt: str, default: str):
         if col_main in sub.columns and sub[col_main].notna().any():
@@ -274,7 +275,7 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
     # Altair
     if _HAS_ALT:
         x_axis = alt.Axis(labelAngle=0, labelPadding=6, title=None,
-                          labelFontSize=14, labelColor='#000')   # X גדול ושחור
+                          labelFontSize=14, labelColor='#000')
         y_axis = alt.Axis(grid=True, tickCount=6, title=None)
 
         if has_b:
@@ -284,7 +285,7 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
             df_long['series_name'] = df_long['series'].map({'ValuesA': name_a, 'ValuesB': name_b})
 
             base = alt.Chart(df_long).encode(
-                x=alt.X('Labels:N', sort=None, axis=x_axis),
+                x=alt.X('Labels:N', sort=None, axis=x_axis, scale=alt.Scale(band=BAR_BAND)),
                 y=alt.Y('value:Q', axis=y_axis),
                 color=alt.Color('series_name:N',
                                 scale=alt.Scale(domain=[name_a, name_b], range=[col_a, col_b]),
@@ -292,24 +293,29 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
                 xOffset='series_name:N',
                 tooltip=['Labels','series_name', alt.Tooltip('value:Q', format='.0f')]
             )
-            bars = base.mark_bar()
-            # תוויות שחורות
+            bars = base.mark_bar(size=BAR_SIZE)
             labels = base.mark_text(color='black', dy=-6).encode(text=alt.Text('value:Q', format='.0f'))
             chart = bars + labels
         else:
             base = alt.Chart(sub[['Labels','ValuesA']]).encode(
-                x=alt.X('Labels:N', sort=None, axis=x_axis),
+                x=alt.X('Labels:N', sort=None, axis=x_axis, scale=alt.Scale(band=BAR_BAND)),
                 y=alt.Y('ValuesA:Q', axis=y_axis),
                 tooltip=['Labels', alt.Tooltip('ValuesA:Q', format='.0f')]
             )
-            bars = base.mark_bar(color=col_a)
+            bars = base.mark_bar(color=col_a, size=BAR_SIZE)
             labels = alt.Chart(sub[['Labels','ValuesA']]).mark_text(color='black', dy=-6).encode(
                 x='Labels:N', y='ValuesA:Q', text=alt.Text('ValuesA:Q', format='.0f')
             )
             chart = bars + labels
 
-        # רווח עליון גדול יותר כדי שלא יהיו צפופים עם הכותרת/מקרא
         chart = chart.properties(height=height, padding={"top": 36, "left": 10, "right": 10, "bottom": 6})
+        # שמירת אחידות פונט בתוך הגרף במידה והוגדר
+        try:
+            chart = chart.configure_axis(labelFont="Assistant", titleFont="Assistant")\
+                         .configure_legend(labelFont="Assistant", titleFont="Assistant")\
+                         .configure_title(font="Assistant")
+        except Exception:
+            pass
         st.altair_chart(chart, use_container_width=True)
         return
 
@@ -319,9 +325,11 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
         vals_a = sub['ValuesA'].fillna(0).tolist() if 'ValuesA' in sub.columns else [0]*len(labels)
         x = range(len(labels))
         if has_b:
-            vals_b = sub['ValuesB'].fillna(0).tolist(); width = 0.38
+            vals_b = sub['ValuesB'].fillna(0).tolist()
+            width = 0.18  # צר יותר
         else:
-            vals_b = None; width = 0.55
+            vals_b = None
+            width = 0.25  # צר יותר
         fig, ax = plt.subplots(figsize=(min(14, max(8, len(labels)*0.8)), height/96))
         if has_b:
             ax.bar([i - width/2 for i in x], vals_a, width, label=name_a, color=col_a)
@@ -333,7 +341,7 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
         ax.set_xlabel(''); ax.set_ylabel('')
         ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
         ax.grid(axis='y', linestyle='--', alpha=0.25)
-        fig.subplots_adjust(top=0.90)  # עוד מרווח עליון
+        fig.subplots_adjust(top=0.90)
         def _annot(xs, ys):
             for xi, yi in zip(xs, ys):
                 ax.text(xi, yi, f"{yi:.0f}", ha='center', va='bottom', fontsize=12, color='black')
@@ -739,7 +747,6 @@ elif st.session_state.group == "G3":
             confidence = st.slider("", 1, 5, step=1, key=f"g3_c{qn}_{row['ChartNumber']}", label_visibility="collapsed")
             submitted = st.form_submit_button("המשך")
 
-        # חובה לבחור תשובה כדי להתקדם (אלא אם הזמן נגמר)
         proceed = False
         if submitted:
             if answer is None:
